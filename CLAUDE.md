@@ -11,7 +11,11 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
-## Current status: v1.2.0, works on hardware, playability reworked
+## Current status: v1.3.0, the partials left the interface
+
+**Read the control-model section before changing any mapping.**
+
+## Previously: v1.2.0, works on hardware, playability reworked
 
 **Read the playability section before changing how the faders behave.**
 
@@ -370,7 +374,82 @@ loudly. WorkshopSpectral modelled 51% and measured 231% on real silicon. **CV
 Out 2 is the authority on this card's cost.** Once TRACT8 has run on hardware,
 replace the prediction with the reading.
 
-## The playability rework (v1.2.0)
+## The control model (v1.3.0) - the partials are gone
+
+Second round of playing feedback, and it went deeper than the first:
+
+> *"I would prefer the vowel sounds just on three sliders. It's too hard to
+> try to manipulate the partials."*
+
+That is not a request for a tweak, it is a verdict on the abstraction. Even
+with the v1.2.0 fixes - faders bending rather than replacing, centre
+detents, both controls live - **per-band control is the wrong interface for
+playing**. A vowel is a position of the mouth, not eight independent
+numbers, and asking anyone to operate seven faders as a chord is asking them
+to solve the Voder's original problem: the one its operators trained for
+months to overcome. Reproducing that is not fidelity, it is just a bad
+instrument.
+
+### What replaced it
+
+**The vowel is now a 2-D space, and two faders place a point in it.**
+
+```
+             BACK  <----------> FRONT
+  CLOSE       OO                 EE
+    ^          |                  |
+    |          |   UH lives in    |
+ OPENNESS      |   here as a      |
+    |          |   blend          |
+    v          |                  |
+   OPEN       AH                 EH
+```
+
+Openness is F1 (how far the jaw opens), Front is F2 (where the tongue
+sits). The eight band gains are the bilinear blend of the four corner
+vowels. The corners come out exact, UH lands inside within 1.7 dB, and
+sweeping both faders together gives diphthongs.
+
+**Faders 6-8 are deliberately unassigned.** That is the point of the
+change, not an omission. Five controls that each mean something beat eight
+that have to be operated as a chord.
+
+### The full mapping
+
+| Fader | Control | | Elsewhere | |
+|---|---|---|---|---|
+| 1 CC 34 | Openness | | Tilt 42/43 | Volume |
+| 2 CC 35 | Front | | Note 36 | Voiced gate |
+| 3 CC 36 | Breath | | Note 48 | Noise gate |
+| 4 CC 37 | Pitch | | Note 60 | Plosive |
+| 5 CC 38 | Brightness | | Note 72 | Freeze |
+
+**Volume moved to the tilt** because it is the one control that wants to be
+a gesture. Pitch and vowel get set and left; swelling a phrase is what
+holding the controller is for. It rests at UNITY, not at half - splitting
+the range around a centre was tried and wasted half of it, since a full back
+tilt only reached half volume and the card could not be faded out at all.
+
+**Pitch moved to a fader** because it is the opposite: something you set and
+leave, which is exactly what a fader is good at and a tilt is bad at.
+
+### OH is not reachable, and that is accepted
+
+OH is rounder than anything on the OO-AH edge - its F2 (840 Hz) sits below
+both back corners - so no bilinear blend of these four reaches it; the
+closest is 6.0 dB away. Making OH a corner instead of AH trades that for a
+5.1 dB miss on AH, which is a worse deal: AH is the more useful vowel and
+the one a player reaches for first. `playable_check.py` records the
+tolerance so anyone retuning the corners can see which trade they are making.
+
+### A latent bug found while doing this
+
+The constructor's initialiser list had been spliced into `ReadPanel()` by an
+earlier edit, so `gate_seen_`, `ext_hold_` and the diagnostic flags were
+being reset 125 times a second. That would have broken the gate latch and
+the external-input hold from the silence fix. Removed with the rewrite.
+
+## Previously: the playability rework (v1.2.0)
 
 v1.1.0 was reported as *"not very playable: with faders moving, the main
 knob doesn't do anything - and moving 8 faders is very very difficult."*
@@ -433,6 +512,8 @@ counts against 132 before, with the worst case at 1568 of 2047.
 
 ## Still to do
 
+- [ ] Confirm the 2-D vowel square is actually playable - that is
+      the whole point of v1.3.0 and it is untested on hardware.
 - [ ] Confirm the lockup is actually gone — it took sustained fader plus
       accelerometer traffic to provoke, so try to reproduce it deliberately.
 - [ ] Read CV Out 2 for the real DSP load. Still unmeasured.

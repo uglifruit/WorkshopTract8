@@ -46,8 +46,8 @@ BAND_MAKEUP = 1    # per-band makeup multiplier applied to y (1 = none)
 
 DAC_MAX = 2047
 
-# A real vowel: AH, from vowels.h.
-VOWEL_AH = [666, 4002, 16000, 15423, 7647, 4226, 3922, 1675]
+# A real vowel: AH, the open-back corner from vowels.h.
+VOWEL_AH = [666, 4003, 16000, 15423, 7647, 4226, 3923, 1675]
 
 
 def coeffs(f0):

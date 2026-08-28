@@ -22,69 +22,54 @@
 #include <stdint.h>
 
 struct VoderState {
-  // Per-band OFFSETS from the vowel the morph is currently making, Q15
-  // signed, centred on 0. The 8mu's faders write these.
+  // --- the five 8mu faders that matter -------------------------------
   //
-  // This is the important design decision in the card, and it was got
-  // wrong first time round. The faders used to write band_gain directly
-  // and latch out the panel morph, so touching one fader killed Knob 1
-  // permanently and the only way to make a vowel was to place all eight
-  // faders by hand - which is the Voder's actual problem, the one that
-  // took its operators months of training.
+  // Fader 1  OPENNESS   vowel square, close <-> open   (F1)
+  // Fader 2  FRONT      vowel square, back  <-> front  (F2)
+  // Fader 3  BREATH     buzz <-> noise
+  // Fader 4  PITCH      F0, 50..500 Hz
+  // Fader 5  BRIGHT     spectral tilt
   //
-  // Now the knob chooses the vowel and the faders BEND it. Both are always
-  // live, one fader is a useful gesture on its own, and a fader at its
-  // centre detent does nothing at all - so you can leave seven alone and
-  // still be playing.
-  int32_t band_offset[8];
+  // Faders 6-8 are unassigned. That is deliberate: this card was
+  // unplayable when every fader did something, because a vowel is not
+  // eight independent numbers to a player. Five controls that each mean
+  // something beat eight that need to be operated as a chord.
+  int32_t openness;      // Q15
+  int32_t front;         // Q15
+  int32_t breath;        // Q15, 0 = all buzz, 32767 = all noise
+  int32_t pitch;         // Q15, mapped to F0 in main.cpp
+  int32_t bright;        // Q15, 16384 = flat
 
-  // Per-band CUT, Q15 multiplier (32768 = no cut). A fader below its
-  // centre detent scales its band down rather than subtracting from it -
-  // see midi8mu.cpp for why the two directions are not symmetric.
-  int32_t band_cut[8];
+  // One flag per control, set the first time the 8mu sends it. Until
+  // then the panel keeps that control. A controller sitting plugged in
+  // but untouched must never seize a knob the player has a hand on.
+  uint8_t openness_from_midi;
+  uint8_t front_from_midi;
+  uint8_t breath_from_midi;
+  uint8_t pitch_from_midi;
+  uint8_t bright_from_midi;
 
-  // The band gains actually handed to the filter bank, Q15 (0..32767).
-  // Computed from the morph plus the offsets; nothing outside main.cpp
-  // writes this. Kept in shared state so the LEDs can display it.
+  // --- accelerometer --------------------------------------------------
+  // Front/back tilt is VOLUME. It was pitch until playing showed that
+  // pitch wants to be set and left, while volume wants a gesture - the
+  // whole point of holding the controller is to be able to swell and
+  // duck a phrase without letting go of anything.
+  int32_t volume;        // Q15, 32767 = unity
+  uint8_t volume_from_midi;
+
+  // --- band gains handed to the filter bank ---------------------------
+  // Computed in main.cpp from the vowel square. Nothing else writes it;
+  // it lives here so the LEDs can display it.
   int32_t band_gain[8];
 
-  // F0 offset from the 8mu accelerometer, Q15 signed. +/-32767 spans one
-  // octave either way. The Voder's foot pedal.
-  int32_t pitch_bend;
-
-  // Vowel position from the 8mu's left/right tilt, Q15 (0..32767), and a
-  // flag saying whether it has ever been sent. Until the controller is
-  // actually tilted sideways the panel's Knob 1 keeps the vowel, so
-  // plugging an 8mu in does not silently seize a control the player is
-  // already using.
-  int32_t vowel_pos;
-  uint8_t vowel_from_midi;
-
-
-  // Breath: how much of the excitation is noise rather than buzz, Q15.
-  // Mirrors Knob 3, driven by fader 8 when the 8mu is present.
-  int32_t breath;
-  uint8_t breath_from_midi;
-
-
-
-  // Excitation gates. The Voder's wrist bar chose one *or* the other; here
-  // they are independent so both can sound at once (useful for voiced
-  // fricatives like "z", which the original could not do).
+  // --- buttons ---------------------------------------------------------
   uint8_t gate_voiced;
   uint8_t gate_noise;
-
-  // Formant freeze latch. When set, band_gain stops tracking its sources.
   uint8_t freeze;
-
-  // 1 while a USB MIDI device is mounted. Drives LED 4.
   uint8_t midi_connected;
 
-  // Plosive triggers are COUNTED, not flagged. A flag set on Core 1 can be
-  // missed entirely if the ISR happens to read either side of it, or fired
-  // twice if the ISR reads before Core 1 clears it. The ISR keeps its own
-  // copy of this counter and fires once per increment it observes, which is
-  // robust to any interleaving.
+  // Counted, not flagged - a flag set on Core 1 can be missed entirely or
+  // fired twice depending on how the ISR interleaves with it.
   uint32_t plosive_count;
 };
 

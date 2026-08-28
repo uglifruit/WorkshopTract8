@@ -22,15 +22,14 @@ another message. If the parser treats one as data, every subsequent CC in
 that sweep is corrupted.
 
 Checks:
-  1. Fader CCs map to the right band, with the SQUARED response curve.
-  2. Out-of-range CCs are ignored.
+  1. The five mapped faders reach the right controls.
+  2. Faders 6-8 and unmapped CCs do nothing.
   3. Note on/off gates and the freeze toggle behave.
   4. Note-on with velocity 0 is treated as a release.
-  5. Freeze blocks fader writes.
   6. Running status is sustained across messages.
   7. Real-time bytes interleaved mid-message do not corrupt it.
   8. Channel is ignored (all 16 behave alike).
-  9. Vowel on the left/right accelerometer axis.
+  9. Volume on the front/back accelerometer axis.
  10. A sustained MIDI flood does not stall the parser (lockup regression).
 
 Run: python tools/midi_check.py
@@ -40,13 +39,13 @@ import sys
 import math
 
 # --- transcribed from midi8mu.h ------------------------------------------
-CC_FADER_FIRST = 34
-CC_FADER_LAST = 40      # 7 band faders
-CC_BREATH = 41          # fader 8
-CC_TILT_UP = 42
-CC_TILT_DOWN = 43
-CC_VOWEL_LEFT = 44
-CC_VOWEL_RIGHT = 45
+CC_OPENNESS = 34     # fader 1
+CC_FRONT = 35        # fader 2
+CC_BREATH = 36       # fader 3
+CC_PITCH = 37        # fader 4
+CC_BRIGHT = 38       # fader 5
+CC_VOL_UP = 42       # tilt front
+CC_VOL_DOWN = 43     # tilt back
 NOTE_VOICED = 36
 NOTE_NOISE = 48
 NOTE_PLOSIVE = 60
@@ -57,17 +56,22 @@ class State:
     """Mirror of VoderState in shared.h."""
 
     def __init__(self):
-        self.band_gain = [0] * 8
-        self.pitch_bend = 0
+        self.openness = 0
+        self.front = 0
+        self.breath = 0
+        self.pitch = 0
+        self.bright = 16384
+        self.openness_from_midi = 0
+        self.front_from_midi = 0
+        self.breath_from_midi = 0
+        self.pitch_from_midi = 0
+        self.bright_from_midi = 0
+        self.volume = 32767
+        self.volume_from_midi = 0
         self.gate_voiced = 0
         self.gate_noise = 0
         self.freeze = 0
         self.plosive_count = 0
-        self.vowel_pos = 0
-        self.vowel_from_midi = 0
-        self.breath = 0
-        self.breath_from_midi = 0
-        self.faders_touched = 0
 
 
 class Dispatch:
@@ -75,40 +79,45 @@ class Dispatch:
 
     def __init__(self):
         self.s = State()
-        self.tilt_up = 0
-        self.tilt_down = 0
-        self.vowel_left = 0
-        self.vowel_right = 0
+        self.vol_up = 0
+        self.vol_down = 0
         self.freeze_held = False
 
     def cc(self, cc, v):
-        if CC_FADER_FIRST <= cc <= CC_FADER_LAST:
+        """Transcription of HandleCc() in midi8mu.cpp."""
+        q15 = v << 8
+        if cc == CC_OPENNESS:
+            # Frozen formants ignore the vowel axes; that is what freeze is.
             if not self.s.freeze:
-                # Squared curve - see midi8mu.cpp for why linear failed.
-                self.s.band_gain[cc - CC_FADER_FIRST] = \
-                    (v * v * 32767) // (127 * 127)
-                self.s.faders_touched = 1
+                self.s.openness = q15
+                self.s.openness_from_midi = 1
+            return
+        if cc == CC_FRONT:
+            if not self.s.freeze:
+                self.s.front = q15
+                self.s.front_from_midi = 1
             return
         if cc == CC_BREATH:
-            self.s.breath = v << 8
+            self.s.breath = q15
             self.s.breath_from_midi = 1
             return
-        if cc in (CC_VOWEL_LEFT, CC_VOWEL_RIGHT):
-            if cc == CC_VOWEL_LEFT:
-                self.vowel_left = v << 8
-            else:
-                self.vowel_right = v << 8
-            pos = 16384 + ((self.vowel_right - self.vowel_left) >> 1)
-            self.s.vowel_pos = max(0, min(32767, pos))
-            self.s.vowel_from_midi = 1
+        if cc == CC_PITCH:
+            self.s.pitch = q15
+            self.s.pitch_from_midi = 1
             return
-        if cc == CC_TILT_UP:
-            self.tilt_up = v << 8
-        elif cc == CC_TILT_DOWN:
-            self.tilt_down = v << 8
+        if cc == CC_BRIGHT:
+            self.s.bright = q15
+            self.s.bright_from_midi = 1
+            return
+        if cc == CC_VOL_UP:
+            self.vol_up = q15
+        elif cc == CC_VOL_DOWN:
+            self.vol_down = q15
         else:
             return
-        self.s.pitch_bend = self.tilt_up - self.tilt_down
+        vol = 32767 - self.vol_down + self.vol_up
+        self.s.volume = max(0, min(32767, vol))
+        self.s.volume_from_midi = 1
 
     def note_on(self, note, vel):
         if vel == 0:
@@ -177,84 +186,88 @@ class Parser:
 
 
 def check_faders():
-    print("\n1/2. Fader CC mapping and the squared response curve")
+    print("\n1/2. The five mapped faders")
     ok = True
-    d = Dispatch()
-    for i, cc in enumerate(range(CC_FADER_FIRST, CC_FADER_LAST + 1)):
-        d.cc(cc, 127)
-        got = d.s.band_gain[i]
-        good = got == 32767
+
+    for cc, name, get in (
+        (CC_OPENNESS, "openness", lambda st: st.openness),
+        (CC_FRONT, "front", lambda st: st.front),
+        (CC_BREATH, "breath", lambda st: st.breath),
+        (CC_PITCH, "pitch", lambda st: st.pitch),
+        (CC_BRIGHT, "bright", lambda st: st.bright),
+    ):
+        dd = Dispatch()
+        dd.cc(cc, 127)
+        got = get(dd.s)
+        good = got == 127 << 8
         if not good:
             ok = False
-        print(f"   CC {cc} -> band {i}   full-scale {got:6d}  "
-              f"{'ok' if good else 'FAIL'}")
+        print(f"   CC {cc} -> {name:9} {got:6d}   {'ok' if good else 'FAIL'}")
 
-    # The curve is the point. A linear fader made the card sound like a
-    # filter sweep because a real vowel has ~27 dB between its loudest and
-    # quietest band and a linear fader at any ordinary position gives a
-    # near-flat spectrum. Squaring puts ~42 dB across the throw.
-    print("   response curve:")
-    span_lo = None
-    for cc_val in (0, 16, 32, 64, 96, 127):
-        g = (cc_val * cc_val * 32767) // (127 * 127)
-        db = 20 * math.log10(max(g, 1) / 32767)
-        if cc_val == 16:
-            span_lo = db
-        print(f"     cc {cc_val:3d} -> {g:6d}  {db:6.1f} dB")
-    usable = -span_lo
-    good = usable > 30
+    # Faders 6-8 are deliberately unassigned. Nothing may move.
+    dd = Dispatch()
+    before = vars(dd.s).copy()
+    for cc in (39, 40, 41):
+        dd.cc(cc, 100)
+    good = vars(dd.s) == before
     if not good:
         ok = False
-    print(f"   usable range from cc 16 to full: {usable:.1f} dB   "
-          f"{'ok' if good else 'FAIL - too compressed to play'}")
+    print(f"   CC 39,40,41 (faders 6-8) do nothing   "
+          f"{'ok' if good else 'FAIL'}")
+    print("   (unassigned on purpose - seven faders of partials is what")
+    print("    made the card unplayable, see playable_check.py)")
 
-    # Fader 8 is breath now, not a band gain.
-    before = list(d.s.band_gain)
-    d.cc(CC_BREATH, 100)
-    good = (d.s.band_gain == before and d.s.breath == 100 << 8
-            and d.s.breath_from_midi == 1)
+    # Other unmapped CCs likewise.
+    dd = Dispatch()
+    before = vars(dd.s).copy()
+    for cc in (0, 1, 8, 33, 44, 45, 46, 50, 127):
+        dd.cc(cc, 64)
+    good = vars(dd.s) == before
     if not good:
         ok = False
-    print(f"   CC {CC_BREATH} drives breath, not a band   "
+    print(f"   unmapped CCs leave the state untouched   "
           f"{'ok' if good else 'FAIL'}")
 
-    # Out-of-range CCs must not touch the bands.
-    before = list(d.s.band_gain)
-    for cc in (0, 1, 8, 33, 46, 50, 127):
-        d.cc(cc, 64)
-    if d.s.band_gain != before:
-        print("   FAIL: an out-of-range CC modified a band gain")
+    # Freeze must block the vowel axes but NOT pitch or breath: freezing a
+    # formant should not stop you playing a melody through it.
+    dd = Dispatch()
+    dd.cc(CC_OPENNESS, 100)
+    dd.s.freeze = 1
+    dd.cc(CC_OPENNESS, 10)
+    dd.cc(CC_PITCH, 90)
+    good = dd.s.openness == 100 << 8 and dd.s.pitch == 90 << 8
+    if not good:
         ok = False
-    else:
-        print("   CCs 0,1,8,33,46,50,127 leave band gains untouched   ok")
+    print(f"   freeze holds the vowel but not pitch   "
+          f"{'ok' if good else 'FAIL'}")
     return ok
 
 
-def check_vowel_tilt():
-    print("\n9. Vowel on the left/right accelerometer axis")
+def check_volume():
+    print("\n9. Volume on the front/back tilt")
     ok = True
     d = Dispatch()
-    good = d.s.vowel_from_midi == 0
-    print(f"   before any tilt, vowel_from_midi = {d.s.vowel_from_midi}   "
-          f"{'ok - panel keeps the knob' if good else 'FAIL'}")
+    good = d.s.volume == 32767 and d.s.volume_from_midi == 0
+    print(f"   rests at unity before any tilt: {d.s.volume}   "
+          f"{'ok' if good else 'FAIL'}")
     ok &= good
 
-    d.cc(CC_VOWEL_RIGHT, 127)
-    right = d.s.vowel_pos
+    d.cc(CC_VOL_UP, 127)
+    up = d.s.volume
     d2 = Dispatch()
-    d2.cc(CC_VOWEL_LEFT, 127)
-    left = d2.s.vowel_pos
-    good = right > 16384 > left
-    print(f"   tilt right -> {right:5d}, tilt left -> {left:5d}   "
-          f"{'ok - opposite directions' if good else 'FAIL'}")
+    d2.cc(CC_VOL_DOWN, 127)
+    down = d2.s.volume
+    # Back tilt must reach silence, or the card cannot be faded out.
+    good = up >= 32767 and down < 1000
+    print(f"   tilt front -> {up:5d}, tilt back -> {down:5d}   "
+          f"{'ok - full duck to silence' if good else 'FAIL'}")
     ok &= good
 
-    # Must stay in Q15 range at the extremes.
     d3 = Dispatch()
-    d3.cc(CC_VOWEL_LEFT, 127)
-    d3.cc(CC_VOWEL_RIGHT, 0)
-    good = 0 <= d3.s.vowel_pos <= 32767
-    print(f"   extreme tilt stays in range: {d3.s.vowel_pos}   "
+    d3.cc(CC_VOL_DOWN, 127)
+    d3.cc(CC_VOL_UP, 0)
+    good = 0 <= d3.s.volume <= 32767
+    print(f"   stays in Q15 range at the extreme: {d3.s.volume}   "
           f"{'ok' if good else 'FAIL'}")
     ok &= good
     return ok
@@ -329,20 +342,6 @@ def check_notes():
     return ok
 
 
-def check_freeze_blocks():
-    print("\n5. Freeze blocks fader writes")
-    d = Dispatch()
-    d.cc(34, 100)
-    before = d.s.band_gain[0]
-    d.s.freeze = 1
-    d.cc(34, 7)
-    after = d.s.band_gain[0]
-    ok = before == after
-    print(f"   band 0 {before} -> {after} while frozen   "
-          f"{'ok' if ok else 'FAIL - freeze did not hold'}")
-    return ok
-
-
 def check_running_status():
     print("\n6. Running status - the 8mu's fader sweep")
     got = []
@@ -352,7 +351,7 @@ def check_running_status():
     # One status byte, then eight data pairs: a sweep of fader 1.
     stream = [0xB0]
     for v in (10, 20, 30, 40, 50, 60, 70, 80):
-        stream += [34, v]
+        stream += [CC_OPENNESS, v]
     for b in stream:
         p.byte(b)
 
@@ -360,10 +359,10 @@ def check_running_status():
     print(f"   1 status + 8 data pairs -> {len(got)} messages   "
           f"{'ok' if ok else 'FAIL - running status not sustained'}")
     if ok:
-        final = d.s.band_gain[0]
-        expect = (80 * 80 * 32767) // (127 * 127)   # squared curve
+        final = d.s.openness
+        expect = 80 << 8
         ok = final == expect
-        print(f"   final band 0 gain {final} (expect {expect})   "
+        print(f"   final openness {final} (expect {expect})   "
               f"{'ok' if ok else 'FAIL'}")
     return ok
 
@@ -406,25 +405,24 @@ def check_channel_agnostic():
     ok = True
     for ch in range(16):
         d = Dispatch()
-        d.message(0xB0 | ch, 34, 127)
-        if d.s.band_gain[0] != 32767:
+        d.message(0xB0 | ch, CC_OPENNESS, 127)
+        if d.s.openness != 127 << 8:
             print(f"   channel {ch}: FAIL")
             ok = False
     if ok:
-        print("   all 16 channels drive band 0 identically   ok")
+        print("   all 16 channels drive openness identically   ok")
     return ok
 
 
 def main():
-    print("TRACT8 8mu MIDI check: faders CC 34-40 bands, 41 breath,")
-    print("  accelerometer 42/43 pitch and 44/45 vowel, notes 36/48/60/72")
+    print("TRACT8 8mu MIDI check: faders 34 openness, 35 front, 36 breath,")
+    print("  37 pitch, 38 bright; tilt 42/43 volume; notes 36/48/60/72")
     ok = check_faders()
     ok &= check_notes()
-    ok &= check_freeze_blocks()
     ok &= check_running_status()
     ok &= check_realtime_interleave()
     ok &= check_channel_agnostic()
-    ok &= check_vowel_tilt()
+    ok &= check_volume()
     ok &= check_flood()
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1

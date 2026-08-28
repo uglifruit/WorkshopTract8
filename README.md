@@ -49,59 +49,48 @@ mapping, so a device straight out of the box drives it.
 
 | 8mu control | Factory message | Effect |
 |---|---|---|
-| Faders 1–7 | CC 34–40 | **Bend bands 1–7** (centre = neutral) |
-| Fader 8 | CC 41 | **Breath** — buzz ↔ noise |
-| Tilt front / back | CC 42 / 43 | F0 pitch bend, ±1 octave |
-| Tilt left / right | CC 44 / 45 | **Vowel morph** |
+| Fader 1 | CC 34 | **Openness** — close ↔ open (vowel F1) |
+| Fader 2 | CC 35 | **Front** — back ↔ front (vowel F2) |
+| Fader 3 | CC 36 | **Breath** — buzz ↔ noise |
+| Fader 4 | CC 37 | **Pitch** — F0, 50–500 Hz |
+| Fader 5 | CC 38 | **Brightness** — spectral tilt |
+| Faders 6–8 | — | unused, on purpose |
+| Tilt front / back | CC 42 / 43 | **Volume** — flat is full, tilt back to fade |
 | Button 1 | Note 36 (C2) | Gate the voiced buzz |
 | Button 2 | Note 48 (C3) | Gate the unvoiced noise |
 | Button 3 | Note 60 (C4) | Plosive burst |
 | Button 4 | Note 72 (C5) | Toggle formant freeze |
 
-Channel-agnostic — set the 8mu to any channel. The remaining accelerometer
-gestures (CC 46–49), pitch bend, sysex and program change are ignored.
+Channel-agnostic — set the 8mu to any channel.
 
-**The faders bend the vowel; they do not replace it.** Knob 1 (or the
-left/right tilt) chooses the vowel, and each fader shades one band around a
-**centre detent at 64**. Leave a fader in the middle and it does nothing at
-all — so you can move one and leave the other six alone, and still be
-playing.
+**Two faders reach every vowel.** Openness and Front are the two axes of the
+vowel quadrilateral every phonetics textbook draws — how far the jaw is open,
+and where the tongue sits. The four corners are OO (close back), AH (open
+back), EE (close front) and EH (open front), and the eight filter bands are a
+blend of those corners. UH sits inside the square; sweep both faders together
+and you get diphthongs.
 
-This matters because the first version had the faders write the band gains
-outright and lock the knob out on first touch. One fader move killed Knob 1
-permanently, and the only route to a vowel was placing all eight faders by
-hand — which is the Voder's *own* problem, the one its operators trained
-for months to solve. There is no reason to reproduce it on an instrument
-that already puts a whole vowel under one knob.
+**Faders 6–8 do nothing, deliberately.** An earlier version gave each fader
+one filter band, and it was unplayable — a vowel is a position of the mouth,
+not eight independent numbers, and shaping one meant operating seven faders as
+a chord. That is the Voder's *original* problem, the one its operators trained
+for months to overcome. Two faders on the two real axes reach the whole space
+and leave a hand free.
 
-Up from centre **boosts** (additive, so a quiet band can really become a
-formant); down from centre **cuts** (proportional, floored at −18 dB, so
-no fader can punch a silent hole in the spectrum).
+**Volume is on the tilt** because it is the one control that wants to be a
+gesture rather than a setting. Pitch and vowel get set and left; swelling and
+ducking a phrase is what having the controller in your hands is for. Flat is
+full volume, so a controller lying on the desk is never quiet.
 
-**Fader 8 is breath, not band 8.** Giving up a band was a deliberate trade:
-the buzz/noise balance carries more of what makes this sound like a voice
-than any single band gain, and reaching for a panel knob mid-phrase breaks
-the performance. Band 8 (3800 Hz) carries sibilance rather than vowel
-identity, the noise source feeds it plenty, and it is still fully reachable
-from the vowel morph and Knob 2.
-
-**The vowel morph is on the left/right tilt**, because it turned out to
-carry the most character of any control here and wants to be playable
-without letting go of the faders.
-
-Each of these takes over from its panel equivalent only when you actually
-use it — an 8mu sitting plugged in but untouched never seizes a knob your
-hand is already on.
-
-The 8mu only transmits when something changes, so a band stays where you left
-it until you move that fader again.
+Every control takes over from its panel equivalent only when you actually move
+it — an 8mu plugged in but untouched never seizes a knob your hand is on.
 
 ### On the panel
 
 | Switch | Knob 1 (Main) | Knob 2 (X) | Knob 3 (Y) |
 |---|---|---|---|
-| **Middle / Down** | Vowel morph | Mouth openness | Source mix, buzz ↔ noise |
-| **Up** | F0, 50–500 Hz | — | Source mix |
+| **Middle / Down** | Openness | Front | Breath |
+| **Up** | Pitch | Brightness | Breath |
 
 Switch **Down** also fires a plosive on each flick — the nearest the panel has
 to a stop key.
@@ -178,12 +167,11 @@ are present in every ComputerCard project.
 
 ## Testing
 
-Nine host-side scripts under `tools/`, run individually. They need `numpy`.
+Eight host-side scripts under `tools/`, run individually. They need `numpy`.
 
 ```bash
 python tools/filter_check.py   # band geometry, Q15 quantisation, STABILITY
 python tools/excite_check.py   # polyBLEP aliasing, noise whiteness
-python tools/vowel_check.py    # vowel distinctness, morph continuity, tilt
 python tools/midi_check.py     # 8mu dispatch AND the running-status parser
 python tools/chain_check.py     # ABSOLUTE output level in DAC counts
 python tools/silence_check.py   # no jack fault may mute the card

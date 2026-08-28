@@ -83,12 +83,16 @@ class VoderCard : public ComputerCard {
     boot_splash_ = kBootSplash;
     panel_phase_ = 0;
     morph_phase_ = 0;
-    ext_hold_ = 0;
-    vowel_hold_ = 0;
-    gate_seen_ = false;
-    diag_use_ext_ = false;
-    diag_gated_ = false;
     knob_main_ = knob_x_ = knob_y_ = 0;
+
+    // Panel defaults chosen so an untouched card speaks immediately:
+    // a mid-open back vowel, moderate pitch, flat brightness, all buzz.
+    panel_openness_ = 20000;
+    panel_front_ = 0;
+    panel_breath_ = 0;
+    panel_pitch_ = 8000;
+    panel_bright_ = 16384;
+
     last_plosive_ = 0;
     last_pulse1_ = false;
     load_acc_ = 0;
@@ -96,26 +100,36 @@ class VoderCard : public ComputerCard {
     load_out_ = 0;
     led_phase_ = 0;
     energy_smooth_ = 0;
-    f0_base_milli_ = kF0DefaultMilliHz;
+    ext_hold_ = 0;
+    gate_seen_ = false;
+    diag_use_ext_ = false;
+    diag_gated_ = false;
 
-    // Start with a neutral vowel so the card makes a recognisable sound the
-    // moment it boots, rather than silence until a fader is touched.
-    for (int i = 0; i < kBands; i++) {
-      g_state.band_gain[i] = kVowelTable[0][i];
-    }
-    g_state.pitch_bend = 0;
+    // Start from the panel defaults so the card makes a recognisable
+    // sound the instant it boots, rather than silence until something is
+    // touched.
+    g_state.openness = panel_openness_;
+    g_state.front = panel_front_;
+    g_state.breath = panel_breath_;
+    g_state.pitch = panel_pitch_;
+    g_state.bright = panel_bright_;
+    g_state.openness_from_midi = 0;
+    g_state.front_from_midi = 0;
+    g_state.breath_from_midi = 0;
+    g_state.pitch_from_midi = 0;
+    g_state.bright_from_midi = 0;
+    g_state.volume = 32767;
+    g_state.volume_from_midi = 0;
     g_state.gate_voiced = 0;
     g_state.gate_noise = 0;
     g_state.freeze = 0;
     g_state.midi_connected = 0;
     g_state.plosive_count = 0;
-    g_state.vowel_pos = 0;
-    g_state.vowel_from_midi = 0;
-    g_state.breath = 0;
-    g_state.breath_from_midi = 0;
-    for (int i = 0; i < kBands; i++) {
-      g_state.band_offset[i] = 0;
-      g_state.band_cut[i] = 32768;   // unity: no cut
+
+    int32_t init_gains[kNumBands];
+    BlendVowel(panel_openness_, panel_front_, init_gains);
+    for (int i = 0; i < kNumBands; i++) {
+      g_state.band_gain[i] = Clamp15(init_gains[i]);
     }
   }
 
@@ -153,31 +167,22 @@ class VoderCard : public ComputerCard {
       p.band_gain[i] = g_state.band_gain[i];
     }
 
-    // Pitch: base from page 2, plus 1V/oct from CV In 1, plus the
-    // accelerometer. CVIn is +/-2048 for +/-6V or so; a semitone is about
-    // 1/12 V. Rather than an exp() per sample, F0 is scaled by a shift-and-
-    // add approximation of 2^(v/12) accurate to a few cents over +/-2 oct.
-    int32_t f0 = f0_base_milli_;
+    // Pitch. Fader 4 if the 8mu has sent it, otherwise Knob 1 on page 2.
+    // Then 1V/oct from CV In 1 on top, so the card still tracks a keyboard
+    // whichever control set the base note.
+    const int32_t pitch_src =
+        g_state.pitch_from_midi ? g_state.pitch : panel_pitch_;
+    int32_t f0 = kF0MinMilliHz +
+                 (int32_t)(((int64_t)pitch_src *
+                            (kF0MaxMilliHz - kF0MinMilliHz)) >> 15);
 
     if (Connected(Input::CV1)) {
       f0 = ApplyOctaves(f0, (int32_t)CVIn1());
     }
-
-    // Accelerometer bend, +/-32767 Q15 spanning +/-1 octave.
-    const int32_t bend = g_state.pitch_bend;
-    if (bend != 0) {
-      // 32767 Q15 == one octave == doubling. Scale into the same units the
-      // CV path uses (2048 per octave) and reuse the approximation.
-      f0 = ApplyOctaves(f0, (bend * 2048) >> 15);
-    }
     p.f0_milli_hz = f0;
 
-    // Source mix: fader 8 if the 8mu has sent it, otherwise Knob 3 (Y).
-    //
-    // Takeover is one-way and latched on first use, not on the 8mu merely
-    // being plugged in. A controller sitting connected but untouched must
-    // not seize a knob the player already has a hand on.
-    p.source_mix = g_state.breath_from_midi ? g_state.breath : knob_y_;
+    // Breath: fader 3 if the 8mu has sent it, otherwise Knob 3.
+    p.source_mix = g_state.breath_from_midi ? g_state.breath : panel_breath_;
 
     // Gates. The 8mu's buttons and a patched gate are OR'd - either opens a
     // source. With no controller and nothing patched, both sources are open
@@ -251,6 +256,15 @@ class VoderCard : public ComputerCard {
 
     // --- audio ------------------------------------------------------------
     int32_t out = voder_.Process(p);
+
+    // Volume, from the 8mu front/back tilt. This is the one control that
+    // wants to be a gesture rather than a setting: pitch and vowel get set
+    // and left, but swelling and ducking a phrase is what having the
+    // controller in your hands is FOR. Unity until the accelerometer has
+    // actually been used, so a card with no 8mu is never quiet.
+    if (g_state.volume_from_midi) {
+      out = (int32_t)(((int64_t)out * g_state.volume) >> 15);
+    }
 
     // Diagnostic state for the LED display. Kept because the first
     // hardware run was silent and there was no way to see WHY from the
@@ -339,116 +353,62 @@ class VoderCard : public ComputerCard {
 
     const Switch sw = SwitchVal();
 
+    // The panel mirrors the 8mu, one knob per page:
+    //
+    //   Middle/Down   Knob1 OPENNESS   Knob2 FRONT     Knob3 BREATH
+    //   Up            Knob1 PITCH      Knob2 BRIGHT    Knob3 BREATH
+    //
+    // Each control is taken from the 8mu instead once that fader has
+    // actually been moved. The takeover is per-control and one-way, so a
+    // controller sitting plugged in but untouched never seizes a knob the
+    // player has a hand on, and moving one fader does not disable the
+    // other knobs.
     if (sw == Switch::Up) {
-      // Page 2: Knob 1 is F0. 50..500 Hz over the knob's travel.
-      f0_base_milli_ = kF0MinMilliHz +
-                       (int32_t)(((int64_t)knob_main_ *
-                                  (kF0MaxMilliHz - kF0MinMilliHz)) >> 15);
-      // NOTE: no early return. The morph below still has to run, because
-      // the 8mu's tilt can be driving the vowel while the panel is on the
-      // pitch page - and because the fader offsets are applied there too.
-      // Returning here left the band gains frozen at whatever they were,
-      // which is one more way the card could look broken.
+      panel_pitch_ = knob_main_;
+      panel_bright_ = knob_x_;
+    } else {
+      panel_openness_ = knob_main_;
+      panel_front_ = knob_x_;
     }
+    panel_breath_ = knob_y_;
 
-    // Page 1: the vowel morph. Frozen formants ignore the panel, same as
-    // they ignore the faders.
+    // Frozen formants ignore the vowel controls entirely.
     if (g_state.freeze) return;
 
-
-    // The morph is the second most expensive thing in the ISR after the
-    // filter bank - eight bands, each a lerp and a scale, both 64-bit.
-    // Running it every sample costs about 28% of the per-sample budget to
-    // recompute a value that only changes when a hand moves a knob.
-    //
-    // Once every kMorphDiv samples is 125 Hz, far above the rate any knob
-    // can actually be turned, and it drops the morph's share to under 1%.
-    // The band gains are held in g_state between updates, so the filter
-    // bank still sees a value every sample.
+    // Rebuilding the vowel is the second most expensive thing in the ISR
+    // after the filter bank. Running it every sample would spend a
+    // meaningful slice of the budget recomputing a value that only changes
+    // when a hand moves. Once every kMorphDiv samples is 125 Hz, far above
+    // the rate anything can be moved by hand; the band gains are held in
+    // g_state between updates so the bank still sees a value every sample.
     if (++morph_phase_ < kMorphDiv) return;
     morph_phase_ = 0;
-    ext_hold_ = 0;
-    vowel_hold_ = 0;
-    gate_seen_ = false;
-    diag_use_ext_ = false;
-    diag_gated_ = false;
 
-    // Vowel position: the 8mu's left/right tilt if it has ever been sent,
-    // otherwise Knob 1. Same one-way latched takeover as breath.
-    //
-    // Putting the vowel on the accelerometer came out of playing the card:
-    // the morph carries more of the character than any single band gain
-    // does, and having to let go of the faders to reach a knob broke the
-    // performance. Tilting the controller leaves both hands where they are.
-    // On the pitch page Knob 1 is doing pitch, so the vowel comes from the
-    // 8mu if it is driving, otherwise from the last position the knob was
-    // left at on page 1. That is what vowel_hold_ remembers.
-    if (sw != Switch::Up) vowel_hold_ = knob_main_;
+    const int32_t openness =
+        g_state.openness_from_midi ? g_state.openness : panel_openness_;
+    const int32_t front =
+        g_state.front_from_midi ? g_state.front : panel_front_;
 
-    const int32_t vowel_src =
-        g_state.vowel_from_midi ? g_state.vowel_pos : vowel_hold_;
+    // Two axes, four corner vowels, bilinear between them. See vowels.h.
+    int32_t gains[kNumBands];
+    BlendVowel(openness, front, gains);
 
-    // Walk the vowel table, crossfading between adjacent entries.
-    // kNumVowels-1 segments across the Q15 travel.
-    const int32_t scaled = vowel_src * (kNumVowels - 1);  // 0 .. 5*32767
-    int32_t idx = scaled >> 15;
-    if (idx >= kNumVowels - 1) idx = kNumVowels - 2;
-    const int32_t f = scaled - (idx << 15);  // 0..32767 within the segment
+    // Brightness tilts the result toward the high or low bands.
+    // Multiplicative, so it cannot drive a band negative or pin one at
+    // full scale - the additive version could do both, depending on the
+    // vowel, and a band pinned at zero is a hole no control can reopen.
+    const int32_t bright =
+        g_state.bright_from_midi ? g_state.bright : panel_bright_;
+    const int32_t tilt = bright - 16384;
 
-    // Knob 2 tilts the result toward the high bands - "mouth openness".
-    // At centre it is flat; fully clockwise the top bands are boosted and
-    // the bottom cut, which brightens the vowel without changing which
-    // vowel it is.
-    const int32_t tilt = knob_x_ - 16384;  // -16384 .. +16383
-
-    for (int i = 0; i < kBands; i++) {
-      const int32_t a = kVowelTable[idx][i];
-      const int32_t b = kVowelTable[idx + 1][i];
-      int32_t g = a + (int32_t)((((int64_t)(b - a)) * f) >> 15);
-
-      // Tilt: scale each band by a factor that rises across the spectrum
-      // when the knob is clockwise and falls when it is anticlockwise.
-      //
-      // This is MULTIPLICATIVE, not additive, and that is the whole point.
-      // An additive tilt was tried first and cannot be made to work: the
-      // offset needed to brighten a loud band audibly is larger than a
-      // quiet band's entire value, so one end of the spectrum always
-      // clamps. With AH, whose 250 Hz gain is only 1364, an additive tilt
-      // strong enough to hear drove band 0 negative while band 2 - already
-      // at full scale - was clipped at the other end of the knob. Bands
-      // pinned at 0 are holes no fader can reopen, and they read as a
-      // broken filter rather than as a tone control.
-      //
-      // Scaling sidesteps both: a band at zero stays at zero, a loud band
-      // is cut proportionally, and nothing can go negative. The factor is
-      // Q15, so 32768 is unity.
-      //
-      // The >>4 gives a +/-22% swing at the outermost bands - about 1.2 dB
-      // of spectral change, audible as brightness without displacing the
-      // vowel. tools/vowel_check.py check 3 verifies no band pins at
-      // either extreme of the knob for ANY vowel in the table; at >>2 two
-      // bands pin, at >>3 one does.
-      const int32_t pos = (i * 2) - 7;  // -7 .. +7, odd steps
+    for (int i = 0; i < kNumBands; i++) {
+      const int32_t pos = (i * 2) - 7;  // -7 .. +7
       int32_t factor = 32768 + (int32_t)(((int64_t)tilt * pos) >> 4);
       if (factor < 0) factor = 0;
-      g = (int32_t)(((int64_t)g * factor) >> 15);
-
-      // Apply this band's fader. The fader bends the vowel rather than
-      // replacing it, so both controls stay live: a fader at its centre
-      // detent changes nothing at all, and Knob 1 keeps working no matter
-      // how many faders have been moved.
-      //
-      // Cut first, then boost. Only one of the two is ever non-neutral for
-      // a given fader position, so the order does not matter musically -
-      // but doing the multiply first keeps the boost out of the product
-      // and avoids scaling a number that has already been clamped.
-      g = (int32_t)(((int64_t)g * g_state.band_cut[i]) >> 15);
-      g += g_state.band_offset[i];
-
+      int32_t g = (int32_t)(((int64_t)gains[i] * factor) >> 15);
       g_state.band_gain[i] = Clamp15(g);
     }
   }
-
 
   void __not_in_flash_func(UpdateLeds)() {
     if (boot_splash_ > 0) {
@@ -507,11 +467,11 @@ class VoderCard : public ComputerCard {
   int32_t boot_mute_, boot_splash_;
   int32_t panel_phase_, morph_phase_;
   int32_t ext_hold_;
-  int32_t vowel_hold_;
   bool gate_seen_;
   bool diag_use_ext_, diag_gated_;
   int32_t knob_main_, knob_x_, knob_y_;
-  int32_t f0_base_milli_;
+  int32_t panel_openness_, panel_front_, panel_breath_;
+  int32_t panel_pitch_, panel_bright_;
   uint32_t last_plosive_;
   bool last_pulse1_;
   uint32_t load_acc_;
