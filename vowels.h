@@ -41,17 +41,24 @@
 // Worst adjacent step is 6.1 dB and the mean is 9.5 dB. If you reorder
 // these rows or retune the formants, re-run tools/vowel_check.py.
 //
-// THE PEAK IS 26800, NOT 32767, AND THAT IS DELIBERATE. Knob 2's tilt
-// multiplies each band by up to 1.219, so a table that peaked at full
-// scale would clip its loudest band the moment the knob moved clockwise -
-// and the vowels whose peak sits at band 0 (OO and EE) would lose exactly
-// the formant that identifies them. 26800 * 1.219 = 32669, just inside
-// Q15. Raising these numbers to "use the full range" reintroduces the bug;
-// tools/vowel_check.py check 3 fails if you do.
+// THE PEAK IS 16000, NOT 32767, AND THAT IS DELIBERATE - twice over.
 //
-// The scaling is uniform, so it costs nothing in distinctness - a constant
-// factor cancels in the dB comparison - and the lost 1.8 dB of level is
-// made up in the output gain staging.
+// First, Knob 2's tilt multiplies each band by up to 1.219, so a table
+// peaking at full scale would clip its loudest band the moment the knob
+// moved clockwise, and the vowels whose peak sits at band 0 (OO and EE)
+// would lose exactly the formant that identifies them.
+//
+// Second, and this is what set the current figure: the 8mu's faders ADD a
+// signed offset of up to +/-20000 to bend the vowel. At the previous peak
+// of 26800 there was only 1.7 dB of room above the loudest band, so
+// pushing a prominent formant up did almost nothing - the fader hit the
+// ceiling immediately and felt dead exactly where a player would reach for
+// it. At 16000 there is about 6 dB of boost on even the loudest band.
+//
+// The scaling is uniform, so it costs nothing in vowel distinctness (a
+// constant factor cancels in the dB comparison) and the level is made up
+// in the output gain staging - see the output shift in voder.cpp, which
+// tools/chain_check.py measures.
 //
 // Read-only, so flash is the right home for this table - it is never
 // written, and the hot path only ever indexes it.
@@ -70,12 +77,12 @@ static constexpr int kNumBands = 8;
 // bands 1-8.
 static const int16_t kVowelTable[kNumVowels][kNumBands] = {
   //  250    450    700   1000   1400   1900   2600   3800
-  {  1116,  6704, 26800, 25834, 12808,  7078,  6570,  2806 },  // AH  F1 730 F2 1090
-  {  1475, 17701, 26800, 13485,  4036,  3154,  3591,  1843 },  // OH  F1 570 F2 840
-  { 26800, 14017, 10122, 11204,  5202,  4450,  4242,  2128 },  // OO  F1 300 F2 870
-  {  1341, 12892, 26800, 19858, 14137,  8433,  6209,  2574 },  // UH  F1 640 F2 1190
-  {  2543, 26800, 20330,  6119, 13384, 23545, 18317,  5253 },  // EH  F1 530 F2 1840
-  { 26800,  6979,  1448,  1556,  4731, 14331, 20291,  9970 },  // EE  F1 270 F2 2290
+  {   666,  4002, 16000, 15423,  7647,  4226,  3922,  1675 },  // AH  F1 730 F2 1090
+  {   881, 10568, 16000,  8051,  2410,  1883,  2144,  1100 },  // OH  F1 570 F2 840
+  { 16000,  8368,  6043,  6689,  3106,  2657,  2533,  1270 },  // OO  F1 300 F2 870
+  {   801,  7697, 16000, 11856,  8440,  5035,  3707,  1537 },  // UH  F1 640 F2 1190
+  {  1518, 16000, 12137,  3653,  7990, 14057, 10936,  3136 },  // EH  F1 530 F2 1840
+  { 16000,  4167,   864,   929,  2824,  8556, 12114,  5952 },  // EE  F1 270 F2 2290
 };
 }  // namespace tract8
 

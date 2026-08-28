@@ -283,10 +283,19 @@ int32_t __not_in_flash_func(Voder::Process)(const Params& p) {
 
   // --- output -----------------------------------------------------------
 
-  // Back down to the 12-bit DAC range. The >>3 headroom taken before the
-  // bank plus this shift is the overall gain staging; tools/filter_check.py
-  // checks a full-scale input with all bands open does not clip.
-  return sum >> 4;
+  // Back down to the 12-bit DAC range. The >>3 before the bank plus this
+  // shift is the whole gain staging, and tools/chain_check.py measures it
+  // in DAC counts - which is the only unit that says whether anyone can
+  // hear the card.
+  //
+  // >>4 was the original and left a vowel peaking around 130 counts of a
+  // possible 2047: audible, but thin, and it got thinner when the vowel
+  // table was rescaled to 16000 to give the 8mu's faders room to boost.
+  // >>2 puts a vowel near 530 counts with the worst case - all eight bands
+  // open, coherent input - at 1568, still inside the DAC. Do not raise it
+  // further without re-running chain_check.py: >>1 overflows the DAC on
+  // the coherent case, and that clips rather than clamping gracefully.
+  return sum >> 2;
 }
 
 }  // namespace tract8

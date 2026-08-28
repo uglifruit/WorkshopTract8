@@ -17,7 +17,7 @@
 //
 // Mapped here as:
 //
-//   CC 34-40       filter band gains 1-7          the Voder's ten keys
+//   CC 34-40       band OFFSETS 1-7, centre 64    the Voder's ten keys
 //   CC 41          BREATH, buzz <-> noise         the Voder's wrist bar
 //   CC 42/43       F0 up / down                   the Voder's foot pedal
 //   CC 44/45       VOWEL, left / right tilt       (no 1939 equivalent)
@@ -46,6 +46,19 @@ namespace tract8 {
 // is 3800 Hz, the least missed of the eight: it carries sibilance rather
 // than vowel identity, and the noise source feeds it plenty. It is still
 // fully reachable from the vowel morph and from Knob 2's tilt.
+// How far one fader can bend its band, Q15. 20000 is about +/-2x in
+// linear terms - enough to bring a quiet formant forward or push a loud
+// one back convincingly, without letting a single fader obliterate the
+// vowel the knob is making.
+static constexpr int32_t kFaderOffsetMax = 20000;
+
+// How far down a fader can scale its band, Q15. 3900/32768 is -18 dB:
+// clearly audible shading, but the band is still there. A fader that shut
+// its band completely punched a hole in the spectrum that read as a broken
+// filter rather than as a performance, and wasted the bottom quarter of
+// its travel on the difference between silent and silent.
+static constexpr int32_t kFaderCutFloor = 3900;
+
 static constexpr uint8_t kCcFaderFirst = 34;
 static constexpr uint8_t kCcFaderLast = 40;   // 7 bands
 static constexpr uint8_t kCcBreath = 41;      // fader 8

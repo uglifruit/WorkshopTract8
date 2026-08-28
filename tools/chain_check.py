@@ -41,13 +41,13 @@ COEFF_SCALE = 1 << COEFF_SHIFT
 # Gain staging, transcribed from voder.cpp. These are what this test exists
 # to validate.
 PRE_SHIFT = 3      # excite >>= 3   before the bank
-POST_SHIFT = 4     # return sum >> POST_SHIFT
+POST_SHIFT = 2     # return sum >> POST_SHIFT
 BAND_MAKEUP = 1    # per-band makeup multiplier applied to y (1 = none)
 
 DAC_MAX = 2047
 
 # A real vowel: AH, from vowels.h.
-VOWEL_AH = [1116, 6704, 26800, 25834, 12808, 7078, 6570, 2806]
+VOWEL_AH = [666, 4002, 16000, 15423, 7647, 4226, 3922, 1675]
 
 
 def coeffs(f0):

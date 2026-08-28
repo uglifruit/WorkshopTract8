@@ -11,7 +11,11 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
-## Current status: v1.1.0, WORKS ON HARDWARE
+## Current status: v1.2.0, works on hardware, playability reworked
+
+**Read the playability section before changing how the faders behave.**
+
+## Previously: v1.1.0, WORKS ON HARDWARE
 
 The card makes sound. Everything below about silence is history, kept
 because the lessons generalise.
@@ -365,6 +369,55 @@ file, re-run the matching test — they take seconds.**
 loudly. WorkshopSpectral modelled 51% and measured 231% on real silicon. **CV
 Out 2 is the authority on this card's cost.** Once TRACT8 has run on hardware,
 replace the prediction with the reading.
+
+## The playability rework (v1.2.0)
+
+v1.1.0 was reported as *"not very playable: with faders moving, the main
+knob doesn't do anything - and moving 8 faders is very very difficult."*
+Both halves of that were my design error, and the second is the more
+interesting one.
+
+**The knob was dead** because `faders_touched` latched on first fader use
+and the morph then stopped writing bands 1-7 - permanently, for the rest of
+the session. I added that latch to stop the 125 Hz morph overwriting fader
+moves, which was a real conflict, but the cure was worse than the disease.
+
+**Eight simultaneous faders is the Voder's own problem.** It is the thing
+its operators trained for months to overcome. Reproducing it on an
+instrument that already puts a whole vowel under one knob is not fidelity to
+the original, it is just a bad interface.
+
+### The model now
+
+The knob (or the 8mu's left/right tilt) chooses the vowel. Each fader
+**bends one band** around a centre detent at CC 64. Both are live at all
+times, a centred fader contributes exactly nothing, and one fader is a
+meaningful gesture by itself.
+
+**Boost and cut are deliberately asymmetric:**
+
+- **Boost is additive** (`band_offset`, up to +20000). A quiet band needs a
+  real number added to become a formant. Scaling it up would leave it
+  proportionally quiet, and the fader would feel dead on exactly the bands a
+  player most wants to bring forward.
+- **Cut is proportional** (`band_cut`, floored at 3900/32768 = -18 dB).
+  Subtracting a fixed amount drove any band below that amount to exactly
+  zero - a hole no other control could reopen, which reads as a broken
+  filter rather than as shading, and wasted the bottom quarter of the travel
+  on the difference between silent and silent.
+
+`tools/playable_check.py` pins all of this down, including the property that
+actually broke: **the knob must still move the sound after any number of
+faders have moved.** v1.1.0 scores 0.0 dB on that check.
+
+### The vowel table dropped to peak 16000
+
+At 26800 there was only 1.7 dB of headroom above the loudest band, so
+boosting a prominent formant did almost nothing - the fader hit the ceiling
+exactly where a player would reach for it. At 16000 there is ~6 dB of boost
+even on the loudest band. The output shift went `>>4` to `>>2` to give the
+level back, which `chain_check.py` measures: a vowel now peaks near 530 DAC
+counts against 132 before, with the worst case at 1568 of 2047.
 
 ## Design notes from playing it
 

@@ -49,7 +49,7 @@ mapping, so a device straight out of the box drives it.
 
 | 8mu control | Factory message | Effect |
 |---|---|---|
-| Faders 1–7 | CC 34–40 | **Filter band gains 1–7** |
+| Faders 1–7 | CC 34–40 | **Bend bands 1–7** (centre = neutral) |
 | Fader 8 | CC 41 | **Breath** — buzz ↔ noise |
 | Tilt front / back | CC 42 / 43 | F0 pitch bend, ±1 octave |
 | Tilt left / right | CC 44 / 45 | **Vowel morph** |
@@ -61,13 +61,22 @@ mapping, so a device straight out of the box drives it.
 Channel-agnostic — set the 8mu to any channel. The remaining accelerometer
 gestures (CC 46–49), pitch bend, sysex and program change are ignored.
 
-**The faders have a squared response.** The first version scaled them
-linearly and they barely changed the sound — a real vowel has about 27 dB
-between its loudest and quietest band, and a linear fader at any ordinary
-hand position gives a near-flat spectrum, which reads as a filter sweep
-rather than a voice. Squaring puts about 36 dB across the throw, so the
-bottom of a fader genuinely shuts its band and formants appear where your
-hand puts them.
+**The faders bend the vowel; they do not replace it.** Knob 1 (or the
+left/right tilt) chooses the vowel, and each fader shades one band around a
+**centre detent at 64**. Leave a fader in the middle and it does nothing at
+all — so you can move one and leave the other six alone, and still be
+playing.
+
+This matters because the first version had the faders write the band gains
+outright and lock the knob out on first touch. One fader move killed Knob 1
+permanently, and the only route to a vowel was placing all eight faders by
+hand — which is the Voder's *own* problem, the one its operators trained
+for months to solve. There is no reason to reproduce it on an instrument
+that already puts a whole vowel under one knob.
+
+Up from centre **boosts** (additive, so a quiet band can really become a
+formant); down from centre **cuts** (proportional, floored at −18 dB, so
+no fader can punch a silent hole in the spectrum).
 
 **Fader 8 is breath, not band 8.** Giving up a band was a deliberate trade:
 the buzz/noise balance carries more of what makes this sound like a voice
@@ -169,7 +178,7 @@ are present in every ComputerCard project.
 
 ## Testing
 
-Eight host-side scripts under `tools/`, run individually. They need `numpy`.
+Nine host-side scripts under `tools/`, run individually. They need `numpy`.
 
 ```bash
 python tools/filter_check.py   # band geometry, Q15 quantisation, STABILITY
@@ -179,6 +188,7 @@ python tools/midi_check.py     # 8mu dispatch AND the running-status parser
 python tools/chain_check.py     # ABSOLUTE output level in DAC counts
 python tools/silence_check.py   # no jack fault may mute the card
 python tools/init_check.py      # the bank is usable before main() runs
+python tools/playable_check.py  # knob and faders both stay live
 python tools/budget_check.py    # cycle estimate (prediction, not measurement)
 ```
 

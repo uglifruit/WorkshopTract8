@@ -22,8 +22,30 @@
 #include <stdint.h>
 
 struct VoderState {
-  // Filter band gains, Q15 (0..32767). One per band, driven by 8mu faders
-  // CC 34-41 or by the panel vowel morph.
+  // Per-band OFFSETS from the vowel the morph is currently making, Q15
+  // signed, centred on 0. The 8mu's faders write these.
+  //
+  // This is the important design decision in the card, and it was got
+  // wrong first time round. The faders used to write band_gain directly
+  // and latch out the panel morph, so touching one fader killed Knob 1
+  // permanently and the only way to make a vowel was to place all eight
+  // faders by hand - which is the Voder's actual problem, the one that
+  // took its operators months of training.
+  //
+  // Now the knob chooses the vowel and the faders BEND it. Both are always
+  // live, one fader is a useful gesture on its own, and a fader at its
+  // centre detent does nothing at all - so you can leave seven alone and
+  // still be playing.
+  int32_t band_offset[8];
+
+  // Per-band CUT, Q15 multiplier (32768 = no cut). A fader below its
+  // centre detent scales its band down rather than subtracting from it -
+  // see midi8mu.cpp for why the two directions are not symmetric.
+  int32_t band_cut[8];
+
+  // The band gains actually handed to the filter bank, Q15 (0..32767).
+  // Computed from the morph plus the offsets; nothing outside main.cpp
+  // writes this. Kept in shared state so the LEDs can display it.
   int32_t band_gain[8];
 
   // F0 offset from the 8mu accelerometer, Q15 signed. +/-32767 spans one
@@ -38,16 +60,13 @@ struct VoderState {
   int32_t vowel_pos;
   uint8_t vowel_from_midi;
 
+
   // Breath: how much of the excitation is noise rather than buzz, Q15.
   // Mirrors Knob 3, driven by fader 8 when the 8mu is present.
   int32_t breath;
   uint8_t breath_from_midi;
 
-  // Set the first time a band fader moves. After that the panel's vowel
-  // morph stops writing bands 1-7, because the faders own them - otherwise
-  // the morph would overwrite every fader move 125 times a second and the
-  // faders would appear dead.
-  uint8_t faders_touched;
+
 
   // Excitation gates. The Voder's wrist bar chose one *or* the other; here
   // they are independent so both can sound at once (useful for voiced

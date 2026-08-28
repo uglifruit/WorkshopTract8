@@ -84,6 +84,7 @@ class VoderCard : public ComputerCard {
     panel_phase_ = 0;
     morph_phase_ = 0;
     ext_hold_ = 0;
+    vowel_hold_ = 0;
     gate_seen_ = false;
     diag_use_ext_ = false;
     diag_gated_ = false;
@@ -112,7 +113,10 @@ class VoderCard : public ComputerCard {
     g_state.vowel_from_midi = 0;
     g_state.breath = 0;
     g_state.breath_from_midi = 0;
-    g_state.faders_touched = 0;
+    for (int i = 0; i < kBands; i++) {
+      g_state.band_offset[i] = 0;
+      g_state.band_cut[i] = 32768;   // unity: no cut
+    }
   }
 
   virtual void __not_in_flash_func(ProcessSample)() override {
@@ -336,21 +340,21 @@ class VoderCard : public ComputerCard {
     const Switch sw = SwitchVal();
 
     if (sw == Switch::Up) {
-      // Page 2: Knob 1 is F0, Knob 2 is unused for now, Knob 3 still mixes.
-      // 50..500 Hz over the knob's travel, in milli-Hz.
+      // Page 2: Knob 1 is F0. 50..500 Hz over the knob's travel.
       f0_base_milli_ = kF0MinMilliHz +
                        (int32_t)(((int64_t)knob_main_ *
                                   (kF0MaxMilliHz - kF0MinMilliHz)) >> 15);
-      return;
+      // NOTE: no early return. The morph below still has to run, because
+      // the 8mu's tilt can be driving the vowel while the panel is on the
+      // pitch page - and because the fader offsets are applied there too.
+      // Returning here left the band gains frozen at whatever they were,
+      // which is one more way the card could look broken.
     }
 
     // Page 1: the vowel morph. Frozen formants ignore the panel, same as
     // they ignore the faders.
     if (g_state.freeze) return;
 
-    // Once the faders are in play they own bands 1-7 and the morph must
-    // not fight them. It still drives band 8, which no fader claims.
-    const bool faders = FadersInUse();
 
     // The morph is the second most expensive thing in the ISR after the
     // filter bank - eight bands, each a lerp and a scale, both 64-bit.
@@ -364,6 +368,7 @@ class VoderCard : public ComputerCard {
     if (++morph_phase_ < kMorphDiv) return;
     morph_phase_ = 0;
     ext_hold_ = 0;
+    vowel_hold_ = 0;
     gate_seen_ = false;
     diag_use_ext_ = false;
     diag_gated_ = false;
@@ -375,8 +380,13 @@ class VoderCard : public ComputerCard {
     // the morph carries more of the character than any single band gain
     // does, and having to let go of the faders to reach a knob broke the
     // performance. Tilting the controller leaves both hands where they are.
+    // On the pitch page Knob 1 is doing pitch, so the vowel comes from the
+    // 8mu if it is driving, otherwise from the last position the knob was
+    // left at on page 1. That is what vowel_hold_ remembers.
+    if (sw != Switch::Up) vowel_hold_ = knob_main_;
+
     const int32_t vowel_src =
-        g_state.vowel_from_midi ? g_state.vowel_pos : knob_main_;
+        g_state.vowel_from_midi ? g_state.vowel_pos : vowel_hold_;
 
     // Walk the vowel table, crossfading between adjacent entries.
     // kNumVowels-1 segments across the Q15 travel.
@@ -423,17 +433,22 @@ class VoderCard : public ComputerCard {
       if (factor < 0) factor = 0;
       g = (int32_t)(((int64_t)g * factor) >> 15);
 
-      // Bands the faders own are left alone once the faders are in use.
-      if (faders && i < 7) continue;
+      // Apply this band's fader. The fader bends the vowel rather than
+      // replacing it, so both controls stay live: a fader at its centre
+      // detent changes nothing at all, and Knob 1 keeps working no matter
+      // how many faders have been moved.
+      //
+      // Cut first, then boost. Only one of the two is ever non-neutral for
+      // a given fader position, so the order does not matter musically -
+      // but doing the multiply first keeps the boost out of the product
+      // and avoids scaling a number that has already been clamped.
+      g = (int32_t)(((int64_t)g * g_state.band_cut[i]) >> 15);
+      g += g_state.band_offset[i];
+
       g_state.band_gain[i] = Clamp15(g);
     }
   }
 
-  // True once the 8mu has sent any band fader, after which the panel morph
-  // stops writing the seven bands the faders own. Without this the morph
-  // would overwrite every fader move 125 times a second and the faders
-  // would appear dead.
-  bool FadersInUse() const { return g_state.faders_touched != 0; }
 
   void __not_in_flash_func(UpdateLeds)() {
     if (boot_splash_ > 0) {
@@ -492,6 +507,7 @@ class VoderCard : public ComputerCard {
   int32_t boot_mute_, boot_splash_;
   int32_t panel_phase_, morph_phase_;
   int32_t ext_hold_;
+  int32_t vowel_hold_;
   bool gate_seen_;
   bool diag_use_ext_, diag_gated_;
   int32_t knob_main_, knob_x_, knob_y_;
