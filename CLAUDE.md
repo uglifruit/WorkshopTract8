@@ -11,11 +11,13 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
-## Current status: v1.0.0, builds clean, tests pass, NOT yet on hardware
+## Current status: v1.0.1, first hardware run was SILENT, fix untested
 
-`build/tract8.uf2` — **1.97% flash, 18.67% RAM**. All four checkable test
-suites pass. Nothing has been flashed or played: **every claim about sound
-below is a prediction from the algorithm, not an observation.**
+`build/tract8.uf2` — **1.98% flash, 18.79% RAM**. All six test suites pass.
+
+**v1.0.0 was flashed and made no sound**, other than a click from the plosive
+key (switch down, and 8mu button 3). The cause is diagnosed and fixed below,
+but **the fix itself has not yet been confirmed on hardware.**
 
 ## Four corrections to the original brief
 
@@ -43,7 +45,67 @@ any of them.
    instead — MIT with its header intact, and what the official example and six
    released cards already use.
 
-## The two bugs the tests caught
+## The silence bug (v1.0.0) — read this first
+
+The first hardware run produced no sound at all except the plosive click.
+That symptom is worth more than it looks: plosives are summed **after** the
+filter bank, so their working proved the ISR ran, the DAC worked and the
+output path was intact. Everything upstream of the bank was suspect and
+everything downstream was cleared, in one observation.
+
+Two lines were responsible, both with the same shape:
+
+```cpp
+ext_gate = Connected(Input::Pulse2) ? PulseIn2() : true;   // gate path
+use_ext  = Connected(Input::Audio1);                       // excitation path
+```
+
+ComputerCard **forces a disconnected input's value to zero**. So if the
+normalisation probe reports a jack as connected when nothing is patched:
+
+- **Pulse2 misdetected** → `PulseIn2()` reads low forever → both excitation
+  levels gate to zero → silence.
+- **Audio1 misdetected** → the internal excitation is replaced by a constant
+  zero → the bank is fed silence → silence.
+
+Either alone mutes the card. Both fail in the *silencing* direction, which is
+the worst possible direction for a fault nobody can see from the panel.
+
+**The fix removes the dependency on `Connected()` for both.** The gate now
+latches on having actually *seen* Pulse In 2 go high, and the external input
+takes over only when there is genuine signal above `kExtGateLevel`, held for
+`kExtHoldSamples` so zero crossings do not chatter it. A misdetected jack now
+leaves the card droning — recoverable and obvious — instead of mute.
+
+`tools/silence_check.py` enforces the rule going forward: **no single
+jack-detection fault may reduce the card to silence.**
+
+### Why every existing test passed while the card was silent
+
+All five original suites test **DSP**: filter geometry, aliasing, vowel
+distinctness, MIDI decoding, cycle cost. None of them modelled the **control
+flow** that decides what reaches the DSP. `chain_check.py` was written during
+this investigation to measure absolute level end to end (it cleared the maths
+— 221 DAC counts, perfectly audible), and `silence_check.py` to model the
+routing. The lesson generalises: *a DSP test suite can be entirely green
+while the signal never arrives.*
+
+### The diagnostic display
+
+Because every candidate cause looked identical from the front panel, **switch
+down now turns LEDs 0–3 into a diagnostic** (it still fires plosives):
+
+| LED | Meaning if lit |
+|---|---|
+| 0 | Excitation gated shut — no buzz, no noise |
+| 1 | External input has taken over from the internal sources |
+| 2 | Formant freeze is latched |
+| 3 | All eight band gains are near zero |
+
+If the card is ever silent again, that display says which of the four it is
+without another round trip.
+
+## The two bugs the tests caught before hardware
 
 Both were caught before the code ever ran, and neither would have been obvious
 from listening.
@@ -210,7 +272,13 @@ replace the prediction with the reading.
 
 ## Still to do
 
-- [ ] Flash it. Nothing below the algorithm level has been verified.
+- [ ] **Flash v1.0.1 and confirm the silence fix.** If it is still silent,
+      hold the switch down and read LEDs 0–3 (see the diagnostic table
+      above) — that identifies which condition is at fault immediately.
+- [ ] If LED 1 is lit with nothing patched, `kExtGateLevel` is too low for
+      this unit's ADC noise floor; raise it.
+- [ ] If LED 0 is lit, the gate latch is being tripped by noise on Pulse
+      In 2; `gate_seen_` needs a debounce or a threshold.
 - [ ] Read CV Out 2 and replace the 44.2% prediction with the measurement.
 - [ ] Confirm an actual 8mu enumerates and that CC 34–41 move the right bands.
 - [ ] Listen for whether Q=4 is right. It is a guess balancing band separation

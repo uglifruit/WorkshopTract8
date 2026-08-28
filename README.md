@@ -144,25 +144,44 @@ are present in every ComputerCard project.
 
 ## Testing
 
-Five host-side scripts under `tools/`, run individually. They need `numpy`.
+Seven host-side scripts under `tools/`, run individually. They need `numpy`.
 
 ```bash
 python tools/filter_check.py   # band geometry, Q15 quantisation, STABILITY
 python tools/excite_check.py   # polyBLEP aliasing, noise whiteness
 python tools/vowel_check.py    # vowel distinctness, morph continuity, tilt
 python tools/midi_check.py     # 8mu dispatch AND the running-status parser
-python tools/budget_check.py   # cycle estimate (prediction, not measurement)
+python tools/chain_check.py     # ABSOLUTE output level in DAC counts
+python tools/silence_check.py   # no jack fault may mute the card
+python tools/budget_check.py    # cycle estimate (prediction, not measurement)
 ```
 
-Two of these caught real bugs during development — see `CLAUDE.md`.
+Two caught real bugs before hardware; the last two were written *because* of
+the hardware silence bug, and exist to stop it recurring. See `CLAUDE.md`.
 
 ## Status
 
-**Builds clean, tests pass, NOT yet run on hardware.** Every claim above about
-how it *sounds* is a prediction from the algorithm rather than an observation.
-The DSP load figure in `tools/budget_check.py` is a model, and models of this
-hardware have been wrong by a factor of four before now; CV Out 2 is the
-authority once this has been flashed.
+**v1.0.1 — the first hardware run was silent, and the fix is not yet
+confirmed.**
+
+v1.0.0 made no sound except a plosive click. Two lines gated the excitation on
+`Connected()`, and because ComputerCard forces a disconnected input to zero, a
+misdetected jack fed the filter bank silence. Both now fall back to making
+sound rather than muting. See `CLAUDE.md` for the full account.
+
+If this build is still silent, **hold the switch down** — LEDs 0–3 become a
+diagnostic display that says which condition is at fault:
+
+| LED | Meaning if lit |
+|---|---|
+| 0 | Excitation gated shut |
+| 1 | External input has taken over |
+| 2 | Formant freeze latched |
+| 3 | Band gains all near zero |
+
+Everything else above about how it *sounds* remains a prediction. The DSP load
+figure is a model, and models of this hardware have been wrong by a factor of
+four; CV Out 2 is the authority.
 
 ## Credits
 

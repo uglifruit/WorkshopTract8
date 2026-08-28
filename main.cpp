@@ -45,6 +45,15 @@ static constexpr int32_t kBootSplash = 36000;
 // at 48 kHz.
 static constexpr int32_t kPanelDiv = 3;
 
+// External-input detection. A patched signal must exceed this ADC level
+// (about 1.5% of full scale, well above the converter's noise floor) to
+// take over from the internal excitation, and the takeover is then held for
+// kExtHoldSamples so a waveform's zero crossings do not chatter it on and
+// off. 4800 samples is 100 ms - longer than the gap between zero crossings
+// of anything above 10 Hz.
+static constexpr int32_t kExtGateLevel = 30;
+static constexpr int32_t kExtHoldSamples = 4800;
+
 // Vowel morph recompute interval, samples. 384 samples is 125 Hz - far
 // faster than a hand can turn a knob, and it takes the morph from roughly
 // a quarter of the ISR budget down to under one percent. See ReadPanel().
@@ -74,6 +83,10 @@ class VoderCard : public ComputerCard {
     boot_splash_ = kBootSplash;
     panel_phase_ = 0;
     morph_phase_ = 0;
+    ext_hold_ = 0;
+    gate_seen_ = false;
+    diag_use_ext_ = false;
+    diag_gated_ = false;
     knob_main_ = knob_x_ = knob_y_ = 0;
     last_plosive_ = 0;
     last_pulse1_ = false;
@@ -153,11 +166,24 @@ class VoderCard : public ComputerCard {
     // Source mix: Knob 3 (Y) crossfades buzz to noise.
     p.source_mix = knob_y_;
 
-    // Gates. The 8mu's buttons and the panel are OR'd - either can open a
-    // source. With no controller attached and no gate patched, both sources
-    // are open so the card drones, which is what you want when exploring
-    // the vowel morph.
-    const bool ext_gate = Connected(Input::Pulse2) ? PulseIn2() : true;
+    // Gates. The 8mu's buttons and a patched gate are OR'd - either opens a
+    // source. With no controller and nothing patched, both sources are open
+    // so the card drones, which is what you want when exploring the vowels.
+    //
+    // The gate is taken as OPEN unless Pulse In 2 has actually been seen
+    // going high at some point. Testing Connected(Pulse2) alone was the
+    // first hardware run's silence bug, or half of it: if the
+    // normalisation probe reports Pulse2 connected when nothing is
+    // patched, PulseIn2() reads low forever, both excitation levels sit at
+    // zero and the card is mute. Plosives still sounded because they are
+    // summed after the filter bank - which is the symptom that found this.
+    //
+    // Latching on "have we ever seen this jack go high" means a
+    // misdetected jack leaves the card droning (recoverable, obvious)
+    // rather than silent (looks broken). A real gate patched in takes
+    // control the first time it rises.
+    if (PulseIn2()) gate_seen_ = true;
+    const bool ext_gate = gate_seen_ ? PulseIn2() : true;
     const bool any_midi_gate = g_state.gate_voiced || g_state.gate_noise;
 
     if (any_midi_gate) {
@@ -169,8 +195,24 @@ class VoderCard : public ComputerCard {
     }
 
     // Audio In 1 replaces the internal excitation when patched.
-    p.use_ext = Connected(Input::Audio1);
-    p.ext_input = p.use_ext ? (int32_t)AudioIn1() : 0;
+    //
+    // Gated on the signal actually being there, not on the jack alone -
+    // the other half of the silence bug. ComputerCard forces a
+    // disconnected input to zero, so a jack misdetected as connected fed
+    // the filter bank a constant zero and muted the card.
+    //
+    // Requiring real signal makes the failure safe in the right
+    // direction: a false "connected" now falls back to the internal
+    // sources and the card still speaks. A genuinely patched signal
+    // crosses the threshold within a few samples.
+    const int32_t ain = (int32_t)AudioIn1();
+    if (ain > kExtGateLevel || ain < -kExtGateLevel) {
+      ext_hold_ = kExtHoldSamples;
+    } else if (ext_hold_ > 0) {
+      ext_hold_--;
+    }
+    p.use_ext = ext_hold_ > 0;
+    p.ext_input = p.use_ext ? ain : 0;
 
     // --- plosive triggers -------------------------------------------------
     // Counted, not flagged: fire once per increment Core 1 has made since
@@ -196,6 +238,12 @@ class VoderCard : public ComputerCard {
 
     // --- audio ------------------------------------------------------------
     int32_t out = voder_.Process(p);
+
+    // Diagnostic state for the LED display. Kept because the first
+    // hardware run was silent and there was no way to see WHY from the
+    // panel - every candidate cause looked identical from outside.
+    diag_use_ext_ = p.use_ext;
+    diag_gated_ = (p.voiced_level == 0 && p.noise_level == 0);
 
     if (out > 2047) out = 2047;
     if (out < -2048) out = -2048;
@@ -302,6 +350,10 @@ class VoderCard : public ComputerCard {
     // bank still sees a value every sample.
     if (++morph_phase_ < kMorphDiv) return;
     morph_phase_ = 0;
+    ext_hold_ = 0;
+    gate_seen_ = false;
+    diag_use_ext_ = false;
+    diag_gated_ = false;
 
     // Knob 1 walks the vowel table, crossfading between adjacent entries.
     // kNumVowels-1 segments across the knob's Q15 travel.
@@ -372,6 +424,27 @@ class VoderCard : public ComputerCard {
       LedBrightness(i, (uint16_t)(g >> 3));
     }
 
+    // Switch Down turns LEDs 0-3 into a diagnostic display instead of the
+    // band meters. Left in deliberately: when this card is silent, every
+    // possible cause looks the same from the front panel, and that cost a
+    // whole hardware round trip once already.
+    //
+    //   LED 0  excitation is gated shut (no buzz, no noise)
+    //   LED 1  external input has taken over from the internal sources
+    //   LED 2  formant freeze is latched
+    //   LED 3  all eight band gains are near zero
+    if (SwitchVal() == Switch::Down) {
+      int32_t gsum = 0;
+      for (int i = 0; i < kBands; i++) gsum += g_state.band_gain[i];
+      LedOn(0, diag_gated_);
+      LedOn(1, diag_use_ext_);
+      LedOn(2, g_state.freeze != 0);
+      LedOn(3, gsum < 4096);
+      LedOn(4, g_state.midi_connected != 0);
+      LedBrightness(5, 4095);
+      return;
+    }
+
     // LED 4: 8mu connected.
     LedOn(4, g_state.midi_connected != 0);
 
@@ -387,6 +460,9 @@ class VoderCard : public ComputerCard {
 
   int32_t boot_mute_, boot_splash_;
   int32_t panel_phase_, morph_phase_;
+  int32_t ext_hold_;
+  bool gate_seen_;
+  bool diag_use_ext_, diag_gated_;
   int32_t knob_main_, knob_x_, knob_y_;
   int32_t f0_base_milli_;
   uint32_t last_plosive_;
