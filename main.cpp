@@ -108,6 +108,11 @@ class VoderCard : public ComputerCard {
     g_state.freeze = 0;
     g_state.midi_connected = 0;
     g_state.plosive_count = 0;
+    g_state.vowel_pos = 0;
+    g_state.vowel_from_midi = 0;
+    g_state.breath = 0;
+    g_state.breath_from_midi = 0;
+    g_state.faders_touched = 0;
   }
 
   virtual void __not_in_flash_func(ProcessSample)() override {
@@ -163,8 +168,12 @@ class VoderCard : public ComputerCard {
     }
     p.f0_milli_hz = f0;
 
-    // Source mix: Knob 3 (Y) crossfades buzz to noise.
-    p.source_mix = knob_y_;
+    // Source mix: fader 8 if the 8mu has sent it, otherwise Knob 3 (Y).
+    //
+    // Takeover is one-way and latched on first use, not on the 8mu merely
+    // being plugged in. A controller sitting connected but untouched must
+    // not seize a knob the player already has a hand on.
+    p.source_mix = g_state.breath_from_midi ? g_state.breath : knob_y_;
 
     // Gates. The 8mu's buttons and a patched gate are OR'd - either opens a
     // source. With no controller and nothing patched, both sources are open
@@ -339,6 +348,10 @@ class VoderCard : public ComputerCard {
     // they ignore the faders.
     if (g_state.freeze) return;
 
+    // Once the faders are in play they own bands 1-7 and the morph must
+    // not fight them. It still drives band 8, which no fader claims.
+    const bool faders = FadersInUse();
+
     // The morph is the second most expensive thing in the ISR after the
     // filter bank - eight bands, each a lerp and a scale, both 64-bit.
     // Running it every sample costs about 28% of the per-sample budget to
@@ -355,9 +368,19 @@ class VoderCard : public ComputerCard {
     diag_use_ext_ = false;
     diag_gated_ = false;
 
-    // Knob 1 walks the vowel table, crossfading between adjacent entries.
-    // kNumVowels-1 segments across the knob's Q15 travel.
-    const int32_t scaled = knob_main_ * (kNumVowels - 1);  // 0 .. 5*32767
+    // Vowel position: the 8mu's left/right tilt if it has ever been sent,
+    // otherwise Knob 1. Same one-way latched takeover as breath.
+    //
+    // Putting the vowel on the accelerometer came out of playing the card:
+    // the morph carries more of the character than any single band gain
+    // does, and having to let go of the faders to reach a knob broke the
+    // performance. Tilting the controller leaves both hands where they are.
+    const int32_t vowel_src =
+        g_state.vowel_from_midi ? g_state.vowel_pos : knob_main_;
+
+    // Walk the vowel table, crossfading between adjacent entries.
+    // kNumVowels-1 segments across the Q15 travel.
+    const int32_t scaled = vowel_src * (kNumVowels - 1);  // 0 .. 5*32767
     int32_t idx = scaled >> 15;
     if (idx >= kNumVowels - 1) idx = kNumVowels - 2;
     const int32_t f = scaled - (idx << 15);  // 0..32767 within the segment
@@ -400,9 +423,17 @@ class VoderCard : public ComputerCard {
       if (factor < 0) factor = 0;
       g = (int32_t)(((int64_t)g * factor) >> 15);
 
+      // Bands the faders own are left alone once the faders are in use.
+      if (faders && i < 7) continue;
       g_state.band_gain[i] = Clamp15(g);
     }
   }
+
+  // True once the 8mu has sent any band fader, after which the panel morph
+  // stops writing the seven bands the faders own. Without this the morph
+  // would overwrite every fader move 125 times a second and the faders
+  // would appear dead.
+  bool FadersInUse() const { return g_state.faders_touched != 0; }
 
   void __not_in_flash_func(UpdateLeds)() {
     if (boot_splash_ > 0) {

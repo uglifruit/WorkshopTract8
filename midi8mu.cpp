@@ -11,6 +11,8 @@ namespace tract8 {
 // one axis does not wipe the other.
 static int32_t s_tilt_up = 0;
 static int32_t s_tilt_down = 0;
+static int32_t s_vowel_left = 0;
+static int32_t s_vowel_right = 0;
 
 // Toggle edge state for the freeze button. Note-on fires the toggle;
 // note-off is ignored, so freeze latches on press rather than being held.
@@ -18,15 +20,54 @@ static bool s_freeze_held = false;
 
 static void HandleCc(uint8_t cc, uint8_t v) {
   if (cc >= kCcFaderFirst && cc <= kCcFaderLast) {
-    // Faders are the performance. A 7-bit CC scaled to Q15 by <<8 gives
-    // 0..32512, which is 0.2 dB shy of full scale - close enough that the
-    // top of the fader reads as fully open, and it avoids a conditional to
-    // special-case 127.
+    // Faders are the performance, and their CURVE is what makes them feel
+    // like one.
+    //
+    // A linear v<<8 was tried first and the faders barely changed the
+    // sound. The reason is in the numbers: a real vowel has about 27 dB
+    // between its loudest and quietest band, but a linear fader at any
+    // ordinary hand position gives every band roughly the same value - a
+    // flat spectrum, which reads as a filter sweep rather than a voice.
+    // The bottom half of the travel was doing almost nothing.
+    //
+    // Squaring gives about 42 dB across the throw, which is the same order
+    // as the vowel table's own contrast: the bottom of a fader genuinely
+    // shuts its band, and formants appear where the hand puts them.
+    // Cubing was also tried at ~63 dB and is too much - the fader feels
+    // dead until the last third.
     //
     // Ignored while frozen: that is what freeze means.
     if (!g_state.freeze) {
-      g_state.band_gain[cc - kCcFaderFirst] = (int32_t)v << 8;
+      const int32_t sq = ((int32_t)v * (int32_t)v * 32767) / (127 * 127);
+      g_state.band_gain[cc - kCcFaderFirst] = sq;
+      g_state.faders_touched = 1;
     }
+    return;
+  }
+
+  if (cc == kCcBreath) {
+    // Fader 8: breath. Same squared curve is NOT used here - breath is a
+    // balance, not a level, and wants to be linear so the midpoint of the
+    // fader really is half and half.
+    g_state.breath = (int32_t)v << 8;
+    g_state.breath_from_midi = 1;
+    return;
+  }
+
+  if (cc == kCcVowelLeft || cc == kCcVowelRight) {
+    if (cc == kCcVowelLeft) {
+      s_vowel_left = (int32_t)v << 8;
+    } else {
+      s_vowel_right = (int32_t)v << 8;
+    }
+    // Left and right are separate gesture CCs, so the vowel position is
+    // their difference recentred into 0..32767. Tilting the 8mu left walks
+    // toward AH, right toward EE.
+    int32_t pos = 16384 + ((s_vowel_right - s_vowel_left) >> 1);
+    if (pos < 0) pos = 0;
+    if (pos > 32767) pos = 32767;
+    g_state.vowel_pos = pos;
+    g_state.vowel_from_midi = 1;
     return;
   }
 
@@ -35,7 +76,7 @@ static void HandleCc(uint8_t cc, uint8_t v) {
   } else if (cc == kCcTiltDown) {
     s_tilt_down = (int32_t)v << 8;
   } else {
-    return;  // every other CC, including the six unused gestures
+    return;  // every other CC, including the four unused gestures
   }
 
   // Net tilt, +/-32767 Q15, spanning one octave either way in main.cpp.

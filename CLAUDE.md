@@ -11,7 +11,42 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
-## Current status: v1.0.2, two silence bugs found on hardware, fix untested
+## Current status: v1.1.0, WORKS ON HARDWARE
+
+The card makes sound. Everything below about silence is history, kept
+because the lessons generalise.
+
+Three findings from the first real playing session, all fixed:
+
+1. **Lockup under heavy MIDI.** `tuh_midi_rx_cb` drained its endpoint in a
+   `while (true)` that exited only when the read returned 0. An 8mu held in
+   the hand streams accelerometer CCs continuously and can refill the
+   endpoint as fast as the loop empties it, so the callback never returned,
+   `tuh_task()` was never called again, and USB stopped entirely. The drain
+   is now bounded to 256 bytes per callback; the remainder simply arrives on
+   the next one. **Never write an unbounded drain loop inside a callback the
+   task pump is waiting on.**
+2. **The faders barely changed the sound.** They were linear, and a real
+   vowel has ~27 dB between its loudest and quietest band — so a linear
+   fader at any ordinary hand position produces a near-flat spectrum, which
+   is a filter sweep, not a voice. Squared now: ~36 dB across the throw.
+   Cubed was tried at ~63 dB and is too much, the fader feels dead until the
+   last third.
+3. **The vowel morph is better than the faders**, which is worth taking
+   seriously as design feedback: it is the control that carries the
+   character. It moved to the accelerometer's left/right axis, breath took
+   fader 8, and band 8 gave up its fader.
+
+### The fader/morph conflict, which nearly shipped
+
+The panel morph writes all eight band gains at 125 Hz. Once the faders own
+bands 1–7 that would overwrite every fader move within 8 ms and the faders
+would look dead — the *same symptom* as the linear-curve problem but a
+completely different cause. `g_state.faders_touched` latches on first fader
+use and the morph then skips bands 0–6. It still drives band 7, which no
+fader claims.
+
+## Previously: v1.0.2, two silence bugs found on hardware
 
 `build/tract8.uf2` — **1.98% flash, 18.79% RAM**. All seven test suites pass.
 
@@ -331,10 +366,24 @@ loudly. WorkshopSpectral modelled 51% and measured 231% on real silicon. **CV
 Out 2 is the authority on this card's cost.** Once TRACT8 has run on hardware,
 replace the prediction with the reading.
 
+## Design notes from playing it
+
+- **Takeover is one-way and latched on first use**, never on the 8mu merely
+  being connected. `vowel_from_midi`, `breath_from_midi` and
+  `faders_touched` all work this way. A controller sitting plugged in but
+  untouched must not seize a control the player has a hand on.
+- **Band 8 was the right one to sacrifice** for breath: 3800 Hz carries
+  sibilance rather than vowel identity, and the noise source feeds it
+  plenty. It stays reachable from the morph and from Knob 2's tilt.
+- **Breath is linear where the band faders are squared.** It is a balance,
+  not a level — the midpoint of the fader should be half and half.
+
 ## Still to do
 
-- [ ] **Flash v1.0.2 and confirm the initialisation fix.** If it is still
-      silent,
+- [ ] Confirm the lockup is actually gone — it took sustained fader plus
+      accelerometer traffic to provoke, so try to reproduce it deliberately.
+- [ ] Read CV Out 2 for the real DSP load. Still unmeasured.
+- [ ] If anything is ever silent again,
       hold the switch down and read LEDs 0–3 (see the diagnostic table
       above) — that identifies which condition is at fault immediately.
 - [ ] If LED 1 is lit with nothing patched, `kExtGateLevel` is too low for

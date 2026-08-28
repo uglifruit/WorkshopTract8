@@ -113,15 +113,35 @@ void tuh_midi_umount_cb(uint8_t dev_addr, uint8_t instance) {
   }
 }
 
+// Maximum bytes drained per callback.
+//
+// This bound is the whole point of the constant. The obvious loop here is
+// "read until the stream returns nothing", and it hangs the card: an 8mu
+// held in the hand streams accelerometer CCs continuously, and it can
+// refill the endpoint as fast as this loop empties it. The read never
+// returns 0, the callback never returns, tuh_task() is never called again
+// and USB stops being serviced entirely. The card appears to lock up under
+// heavy MIDI - which is exactly what was reported from hardware.
+//
+// 256 bytes is 85 complete channel-voice messages, far more than an 8mu
+// generates between two calls of tuh_task(). Anything left over is not
+// dropped: it stays in the endpoint buffer and arrives on the next
+// callback, a fraction of a millisecond later. Bounding the work per
+// callback is what keeps the task pump turning.
+static constexpr uint32_t kMaxRxBytesPerCallback = 256;
+
 void tuh_midi_rx_cb(uint8_t dev_addr, uint32_t num_packets) {
   if (s_dev_addr != dev_addr || num_packets == 0) return;
 
   uint8_t cable;
   uint8_t buf[48];
-  while (true) {
+  uint32_t drained = 0;
+
+  while (drained < kMaxRxBytesPerCallback) {
     const uint32_t n = tuh_midi_stream_read(dev_addr, &cable, buf, sizeof(buf));
     if (n == 0) return;
     for (uint32_t i = 0; i < n; i++) ParseByte(buf[i]);
+    drained += n;
   }
 }
 

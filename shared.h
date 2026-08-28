@@ -30,6 +30,25 @@ struct VoderState {
   // octave either way. The Voder's foot pedal.
   int32_t pitch_bend;
 
+  // Vowel position from the 8mu's left/right tilt, Q15 (0..32767), and a
+  // flag saying whether it has ever been sent. Until the controller is
+  // actually tilted sideways the panel's Knob 1 keeps the vowel, so
+  // plugging an 8mu in does not silently seize a control the player is
+  // already using.
+  int32_t vowel_pos;
+  uint8_t vowel_from_midi;
+
+  // Breath: how much of the excitation is noise rather than buzz, Q15.
+  // Mirrors Knob 3, driven by fader 8 when the 8mu is present.
+  int32_t breath;
+  uint8_t breath_from_midi;
+
+  // Set the first time a band fader moves. After that the panel's vowel
+  // morph stops writing bands 1-7, because the faders own them - otherwise
+  // the morph would overwrite every fader move 125 times a second and the
+  // faders would appear dead.
+  uint8_t faders_touched;
+
   // Excitation gates. The Voder's wrist bar chose one *or* the other; here
   // they are independent so both can sound at once (useful for voiced
   // fricatives like "z", which the original could not do).

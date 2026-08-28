@@ -49,15 +49,40 @@ mapping, so a device straight out of the box drives it.
 
 | 8mu control | Factory message | Effect |
 |---|---|---|
-| Faders 1–8 | CC 34–41 | **Filter band gains 1–8** |
+| Faders 1–7 | CC 34–40 | **Filter band gains 1–7** |
+| Fader 8 | CC 41 | **Breath** — buzz ↔ noise |
 | Tilt front / back | CC 42 / 43 | F0 pitch bend, ±1 octave |
+| Tilt left / right | CC 44 / 45 | **Vowel morph** |
 | Button 1 | Note 36 (C2) | Gate the voiced buzz |
 | Button 2 | Note 48 (C3) | Gate the unvoiced noise |
 | Button 3 | Note 60 (C4) | Plosive burst |
 | Button 4 | Note 72 (C5) | Toggle formant freeze |
 
-Channel-agnostic — set the 8mu to any channel. The other five accelerometer
-gestures (CC 44–49), pitch bend, sysex and program change are ignored.
+Channel-agnostic — set the 8mu to any channel. The remaining accelerometer
+gestures (CC 46–49), pitch bend, sysex and program change are ignored.
+
+**The faders have a squared response.** The first version scaled them
+linearly and they barely changed the sound — a real vowel has about 27 dB
+between its loudest and quietest band, and a linear fader at any ordinary
+hand position gives a near-flat spectrum, which reads as a filter sweep
+rather than a voice. Squaring puts about 36 dB across the throw, so the
+bottom of a fader genuinely shuts its band and formants appear where your
+hand puts them.
+
+**Fader 8 is breath, not band 8.** Giving up a band was a deliberate trade:
+the buzz/noise balance carries more of what makes this sound like a voice
+than any single band gain, and reaching for a panel knob mid-phrase breaks
+the performance. Band 8 (3800 Hz) carries sibilance rather than vowel
+identity, the noise source feeds it plenty, and it is still fully reachable
+from the vowel morph and Knob 2.
+
+**The vowel morph is on the left/right tilt**, because it turned out to
+carry the most character of any control here and wants to be playable
+without letting go of the faders.
+
+Each of these takes over from its panel equivalent only when you actually
+use it — an 8mu sitting plugged in but untouched never seizes a knob your
+hand is already on.
 
 The 8mu only transmits when something changes, so a band stays where you left
 it until you move that fader again.
@@ -162,8 +187,21 @@ the hardware silence bug, and exist to stop it recurring. See `CLAUDE.md`.
 
 ## Status
 
-**v1.0.2 — two hardware runs, two different silence bugs, fix not yet
-confirmed.**
+**v1.1.0 — it makes sound. Playability changes from the first real session,
+plus a lockup fix.**
+
+The card works. Three things came out of playing it:
+
+- **It could lock up under heavy MIDI.** The USB receive callback drained
+  its endpoint in a `while (true)` that only exited when the stream ran dry
+  — and an 8mu held in the hand streams accelerometer CCs continuously, so
+  it never did. `tuh_task()` stopped being called and USB died. The drain is
+  now bounded per callback.
+- **The faders were too subtle.** Now squared; see above.
+- **The vowel morph and breath moved onto the 8mu**, since those turned out
+  to be the controls worth having under your hands.
+
+### Earlier: two silence bugs (v1.0.0–v1.0.2)
 
 v1.0.0 was silent; jack detection was suspected and fixed, correctly but
 irrelevantly. v1.0.1 was still silent — but the LEDs now tracked the knobs,
