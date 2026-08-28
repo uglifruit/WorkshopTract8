@@ -1,0 +1,195 @@
+draft: false
+Name: TRACT8
+Description: An eight-band Voder - the 1939 Bell Labs talking machine - played by hand from a Music Thing 8mu over USB MIDI Host, one fader per formant band, or from the card's own knobs.
+Language: C++ (ComputerCard)
+Creator: Andy Jenkinson (uglifruit)
+Version: "1.0.0"
+Status: Builds clean, tests pass, not yet run on hardware
+License: MIT
+repository: https://github.com/uglifruit/WorkshopTract8
+Editor: none
+date: 2026-08-28
+
+# TRACT8 is an original implementation after Homer Dudley's Voder (Bell Labs,
+# 1939). No code from the original survives - it was relays and vacuum tubes -
+# so the debt is conceptual rather than legal.
+#
+# It vendors, unmodified and under their own MIT terms:
+#   usb_midi_host.c/.h + usb_midi_host_app_driver.c
+#     (c) 2023 rppicomidi, https://github.com/rppicomidi/usb_midi_host
+#   ComputerCard.h
+#     (c) Chris Johnson
+# Their copyright headers are intact in those files. See LICENSE.
+
+contact:
+  social: github:uglifruit
+
+uf2:
+  - path: UF2/tract8.uf2
+    name: TRACT8 1.0.0
+
+tags:
+  - synth
+  - formant
+  - vocal
+  - speech
+  - emulation
+  - filter
+  - usb-host
+  - midi
+
+summary: |
+  The Voder was the first machine that could talk, demonstrated at the 1939
+  World's Fair. It had no vocabulary and no text input: it made two raw
+  sounds, a buzz and a hiss, and a trained operator shaped them into speech
+  in real time using ten finger keys, a wrist bar and a foot pedal. Operators
+  trained for months to speak with it.<br><br>
+
+  TRACT8 is that instrument with eight bands instead of ten, because eight
+  bands map one fader each onto a Music Thing 8mu - and that physical
+  correspondence, one finger per formant, is the whole reason the card is
+  playable rather than merely programmable.<br><br>
+
+  Plug an 8mu into the front USB-C jack and it works immediately, with
+  nothing to configure: the card reads the 8mu's factory mapping, so faders
+  1-8 (CC 34-41) are the eight filter gains, the accelerometer bends pitch
+  like the Voder's foot pedal, and the four buttons gate the buzz, gate the
+  noise, fire plosive consonants and latch a formant freeze.<br><br>
+
+  With no controller attached the card is still complete. Knob 1 morphs
+  through six vowels, Knob 2 opens and closes the mouth, and Knob 3
+  crossfades buzz to hiss. Switch up puts F0 on Knob 1 instead. The panel
+  and the 8mu write the same eight gains with neither taking priority, so
+  there is no mode to be in - move whichever control is under your hand.<br><br>
+
+  Patch Audio In 1 and your own signal replaces the internal excitation
+  entirely, turning the card into an eight-band formant filter played by
+  hand. CV In 1 is 1V/oct for the buzz, Pulse In 1 fires plosives and Pulse
+  In 2 is a glottal gate.<br><br>
+
+  Technical: eight 2-pole IIR bandpass sections at 250, 450, 700, 1000,
+  1400, 1900, 2600 and 3800 Hz, Q=4, entirely fixed point with Q15
+  coefficients - Q13 was tried and put the lowest band 74 cents flat. The
+  buzz is a polyBLEP-corrected sawtooth, which buys about 5 dB of alias
+  rejection in the bands that matter. Core 0 runs the 48 kHz audio
+  interrupt at 192 MHz; Core 1 owns the TinyUSB host stack and nothing
+  else. All code is copied to RAM to keep flash-cache jitter out of the
+  audio path. CV Out 2 reports the measured DSP load, which is the only
+  figure worth believing - the modelled prediction is 44%.
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Excite
+      type: audio
+      description: >
+        External excitation. When patched, replaces the internal buzz and
+        noise entirely, making the card an eight-band formant filter.
+    - id: CVIn1
+      name: Pitch
+      type: cv
+      description: 1V/oct control of the buzz oscillator's F0.
+    - id: PulseIn1
+      name: Plosive
+      type: pulse
+      description: >
+        Fires a plosive consonant burst on the rising edge - the Voder's
+        stop keys.
+    - id: PulseIn2
+      name: Gate
+      type: pulse
+      description: >
+        Glottal gate. Opens both excitation sources while high. Ignored
+        when the 8mu's gate buttons are in use.
+  outputs:
+    - id: AudioOut1
+      name: Out
+      type: audio
+      description: Mono Voder output.
+    - id: AudioOut2
+      name: Out
+      type: audio
+      description: The same mono output, duplicated for convenience.
+    - id: CVOut1
+      name: Energy
+      type: cv
+      description: >
+        Formant energy envelope, smoothed to roughly 5 ms - follows how much
+        the filter bank is passing rather than the audio itself.
+    - id: CVOut2
+      name: DSP Load
+      type: cv
+      description: >
+        Measured microseconds per sample against the 20.83 us budget, 0-5 V
+        for 0-100%. A measurement, not an estimate.
+    - id: PulseOut1
+      name: Voiced
+      type: pulse
+      description: High while the buzz dominates the noise.
+    - id: PulseOut2
+      name: Frozen
+      type: pulse
+      description: High while formant freeze is latched.
+
+controls:
+  knobs:
+    - when: "Switch Middle or Down"
+      main:
+        name: VOWEL
+        description: >
+          Morphs through six vowels - AH, OH, OO, UH, EH, EE - crossfading
+          the eight band gains between adjacent entries. The order traces a
+          lap of the vowel quadrilateral, so sweeping slowly is the nearest
+          this card gets to a diphthong.
+      x:
+        name: OPENNESS
+        description: >
+          Tilts the band gains toward the high or low end - mouth openness,
+          or brightness. Multiplicative, so it never closes a band entirely.
+      y:
+        name: SOURCE
+        description: >
+          Crossfades the excitation from all buzz (anticlockwise) to all
+          noise (clockwise). The Voder's wrist bar, made continuous.
+    - when: "Switch Up"
+      main:
+        name: PITCH
+        description: Base F0 for the buzz oscillator, 50 to 500 Hz.
+      x:
+        name: (unused)
+        description: Reserved.
+      y:
+        name: SOURCE
+        description: Source mix, as on the other page.
+  leds:
+    - when: "Running"
+      display: list
+      items:
+        - id: 0
+          name: Band 1-2
+          description: Energy in the 250 and 450 Hz bands.
+        - id: 1
+          name: Band 3-4
+          description: Energy in the 700 and 1000 Hz bands.
+        - id: 2
+          name: Band 5-6
+          description: Energy in the 1400 and 1900 Hz bands.
+        - id: 3
+          name: Band 7-8
+          description: Energy in the 2600 and 3800 Hz bands.
+        - id: 4
+          name: 8mu
+          description: Lit while a USB MIDI controller is mounted.
+        - id: 5
+          name: Voiced
+          description: >
+            Bright while voiced, dim while unvoiced, full brightness while
+            formant freeze is latched.
+    - when: "Boot"
+      display: list
+      items:
+        - id: 0
+          name: Splash
+          description: >
+            A chase across all six LEDs for the first 0.75 s while the DAC
+            settles and the USB host stack comes up. Audio is muted.
