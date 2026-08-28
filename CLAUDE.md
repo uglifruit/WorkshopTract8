@@ -11,13 +11,20 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
-## Current status: v1.0.1, first hardware run was SILENT, fix untested
+## Current status: v1.0.2, two silence bugs found on hardware, fix untested
 
-`build/tract8.uf2` — **1.98% flash, 18.79% RAM**. All six test suites pass.
+`build/tract8.uf2` — **1.98% flash, 18.79% RAM**. All seven test suites pass.
 
-**v1.0.0 was flashed and made no sound**, other than a click from the plosive
-key (switch down, and 8mu button 3). The cause is diagnosed and fixed below,
-but **the fix itself has not yet been confirmed on hardware.**
+Two hardware runs, both silent, **two entirely different causes**:
+
+- **v1.0.0** — silent. Suspected jack-detection, fixed it (see below). That
+  fix was correct and worth keeping, but it was *not* the reason the card was
+  mute.
+- **v1.0.1** — still silent, but now the LEDs tracked the knobs and faders.
+  That new information identified the real bug: **static initialisation
+  order**. The filter bank was running with all-zero coefficients.
+
+**v1.0.2 is not yet confirmed on hardware.**
 
 ## Four corrections to the original brief
 
@@ -45,7 +52,61 @@ any of them.
    instead — MIT with its header intact, and what the official example and six
    released cards already use.
 
-## The silence bug (v1.0.0) — read this first
+## The real silence bug (v1.0.1): static initialisation order
+
+**This is the one that actually muted the card.** Read it before touching
+anything to do with construction order.
+
+```cpp
+VoderCard card;          // file-scope global -> ctor runs BEFORE main()
+  -> voder_.Init()       // copies band_b0[] etc. into bank_[]
+
+int main() {
+  VoderInit(0);          // ...which is where band_b0[] gets COMPUTED
+}
+```
+
+Every biquad was initialised from **still-zeroed** coefficient tables. A
+biquad with `b0 = a1 = a2 = 0` outputs zero forever, whatever you feed it and
+whatever gain you apply.
+
+### The symptom was a fingerprint
+
+The second hardware report was *"LEDs change when I turn knob/faders — but no
+sound except the same click"*, and that pair of facts localised it precisely:
+
+- **LEDs responded** → the panel, the MIDI path, `g_state.band_gain` and the
+  LED path all worked. The LEDs display `band_gain`, **not** the filter
+  output.
+- **Plosives sounded** → the ISR, the DAC and the output path all worked.
+  Plosives are summed *after* the bank.
+
+Everything on both sides of the filter bank was proven good. Only the bank
+itself was left.
+
+### The fix
+
+`Voder::Init()` now calls `VoderInit()` itself rather than trusting that
+`main()` got there first, and `VoderInit()` is idempotent so the second call
+from `main()` is harmless. There is also a **mute guard**: if `b0` is still
+zero after init, the bank falls back to pass-through — which sounds wrong,
+but wrong is diagnosable from the panel and silence is not.
+
+**Static initialisation order is not something to be careful about. It is
+something to design out.** Do not add anything to `VoderCard`'s constructor
+that depends on work done in `main()`.
+
+### Why no test caught it
+
+`filter_check.py` computes the coefficients in Python and checks the maths —
+and the maths was always right. It never modelled *when* the C++ runs. The
+coefficients simply were not there yet. `tools/init_check.py` now covers this.
+
+## The first silence bug (v1.0.0): jack detection
+
+Fixed before the real cause was known. The fix stands on its own merits —
+both lines genuinely did fail in the silencing direction — but it was **not**
+why the card was mute.
 
 The first hardware run produced no sound at all except the plosive click.
 That symptom is worth more than it looks: plosives are summed **after** the
@@ -272,7 +333,8 @@ replace the prediction with the reading.
 
 ## Still to do
 
-- [ ] **Flash v1.0.1 and confirm the silence fix.** If it is still silent,
+- [ ] **Flash v1.0.2 and confirm the initialisation fix.** If it is still
+      silent,
       hold the switch down and read LEDs 0–3 (see the diagnostic table
       above) — that identifies which condition is at fault immediately.
 - [ ] If LED 1 is lit with nothing patched, `kExtGateLevel` is too low for

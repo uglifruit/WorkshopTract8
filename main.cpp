@@ -475,6 +475,12 @@ class VoderCard : public ComputerCard {
 
 // Global, not on the stack: the card holds the filter bank and its state,
 // and the stack is only 4 KB.
+//
+// Being a global means this constructor runs BEFORE main(). That is what
+// made v1.0.1 silent: the constructor called Voder::Init(), which copied
+// coefficients that VoderInit() had not computed yet. Voder::Init() now
+// builds them itself, so the ordering cannot bite again - but do not add
+// anything here that depends on work done in main().
 VoderCard card;
 
 int main() {
@@ -483,6 +489,10 @@ int main() {
   // a core with no FPU and no 64-bit multiply, and the headroom matters.
   set_sys_clock_khz(192000, true);
 
+  // Recompute the coefficients at the real system clock. Voder::Init()
+  // already built them from the card's constructor (see the note there),
+  // and VoderInit() is idempotent - this is not what makes the card work,
+  // it just keeps main() honest about what has been initialised.
   VoderInit(0);
 
   // Core 1 owns the USB host stack and nothing else. See usb_core1.cpp for

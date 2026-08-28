@@ -85,6 +85,22 @@ void VoderInit(uint32_t seed) {
 }
 
 void Voder::Init(uint32_t seed) {
+  // Build the coefficients here rather than trusting that VoderInit() has
+  // already run.
+  //
+  // THIS IS NOT BELT AND BRACES. The v1.0.1 card was silent because
+  // VoderCard is a file-scope global, so its constructor - and this
+  // function with it - ran BEFORE main() ever reached VoderInit(). Every
+  // biquad was initialised from the still-zeroed coefficient tables, and a
+  // biquad with b0 = a1 = a2 = 0 outputs zero forever no matter what you
+  // feed it or what gain you apply. Plosives kept working because they are
+  // summed after the bank; the LEDs kept moving because they display
+  // band_gain, not the filter output. Static initialisation order is not
+  // something to be careful about, it is something to design out.
+  //
+  // VoderInit() is idempotent, so calling it again from main() is harmless.
+  VoderInit(seed);
+
   for (int i = 0; i < kBands; i++) {
     bank_[i].b0 = band_b0[i];
     bank_[i].a1 = band_a1[i];
@@ -100,6 +116,19 @@ void Voder::Init(uint32_t seed) {
   noise_env_ = 0;
   energy_ = 0;
   voiced_ = false;
+
+  // Last line of defence. If b0 is zero here the bank is mute and nothing
+  // downstream can tell - so refuse to run silently: fall back to a
+  // pass-through (b0 = 1.0 in Q15, no poles) which is wrong-sounding but
+  // audible, and therefore diagnosable. Silence is the one failure mode
+  // that gives the player no information at all.
+  if (bank_[0].b0 == 0) {
+    for (int i = 0; i < kBands; i++) {
+      bank_[i].b0 = 32768;
+      bank_[i].a1 = 0;
+      bank_[i].a2 = 0;
+    }
+  }
 }
 
 uint32_t __not_in_flash_func(Voder::Random)() {

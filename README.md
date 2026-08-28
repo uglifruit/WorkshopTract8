@@ -144,7 +144,7 @@ are present in every ComputerCard project.
 
 ## Testing
 
-Seven host-side scripts under `tools/`, run individually. They need `numpy`.
+Eight host-side scripts under `tools/`, run individually. They need `numpy`.
 
 ```bash
 python tools/filter_check.py   # band geometry, Q15 quantisation, STABILITY
@@ -153,6 +153,7 @@ python tools/vowel_check.py    # vowel distinctness, morph continuity, tilt
 python tools/midi_check.py     # 8mu dispatch AND the running-status parser
 python tools/chain_check.py     # ABSOLUTE output level in DAC counts
 python tools/silence_check.py   # no jack fault may mute the card
+python tools/init_check.py      # the bank is usable before main() runs
 python tools/budget_check.py    # cycle estimate (prediction, not measurement)
 ```
 
@@ -161,13 +162,17 @@ the hardware silence bug, and exist to stop it recurring. See `CLAUDE.md`.
 
 ## Status
 
-**v1.0.1 — the first hardware run was silent, and the fix is not yet
+**v1.0.2 — two hardware runs, two different silence bugs, fix not yet
 confirmed.**
 
-v1.0.0 made no sound except a plosive click. Two lines gated the excitation on
-`Connected()`, and because ComputerCard forces a disconnected input to zero, a
-misdetected jack fed the filter bank silence. Both now fall back to making
-sound rather than muting. See `CLAUDE.md` for the full account.
+v1.0.0 was silent; jack detection was suspected and fixed, correctly but
+irrelevantly. v1.0.1 was still silent — but the LEDs now tracked the knobs,
+and that identified the real cause: **static initialisation order**. The card
+is a file-scope global, so its constructor ran before `main()` computed the
+filter coefficients, and every biquad was initialised to all zeros. A
+zero-coefficient biquad is silent no matter what you feed it, while the LEDs
+(which read the band gains, not the filter output) carried on working
+perfectly. See `CLAUDE.md` for the full account.
 
 If this build is still silent, **hold the switch down** — LEDs 0–3 become a
 diagnostic display that says which condition is at fault:
