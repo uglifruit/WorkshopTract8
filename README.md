@@ -49,41 +49,60 @@ mapping, so a device straight out of the box drives it.
 
 | 8mu control | Factory message | Effect |
 |---|---|---|
-| Fader 1 | CC 34 | **Openness** — close ↔ open (vowel F1) |
-| Fader 2 | CC 35 | **Front** — back ↔ front (vowel F2) |
-| Fader 3 | CC 36 | **Breath** — buzz ↔ noise |
-| Fader 4 | CC 37 | **Pitch** — F0, 50–500 Hz |
-| Fader 5 | CC 38 | **Brightness** — spectral tilt |
-| Faders 6–8 | — | unused, on purpose |
+| **Fader 1** | CC 34 | **Openness** — close ↔ open (vowel F1) |
+| **Fader 8** | CC 41 | **Front** — back ↔ front (vowel F2) |
+| Fader 3 | CC 36 | Breath — buzz ↔ noise |
+| Fader 4 | CC 37 | Pitch — F0, 50–500 Hz |
+| Fader 5 | CC 38 | Brightness — spectral tilt |
+| Faders 2, 6, 7 | — | unused, on purpose |
 | Tilt front / back | CC 42 / 43 | **Volume** — flat is full, tilt back to fade |
-| Button 1 | Note 36 (C2) | Gate the voiced buzz |
+| Tilt left / right | CC 44 / 45 | **Rounding** — the third vowel axis |
+| **Upside down** | CC 49 | **Mute** |
+| Button 1 | Note 36 (C2) | Gate the voiced buzz, **+ breath while held** |
 | Button 2 | Note 48 (C3) | Gate the unvoiced noise |
 | Button 3 | Note 60 (C4) | Plosive burst |
-| Button 4 | Note 72 (C5) | Toggle formant freeze |
+| Button 4 | Note 72 (C5) | Toggle formant freeze, **+ breath while held** |
 
 Channel-agnostic — set the 8mu to any channel.
 
-**Two faders reach every vowel.** Openness and Front are the two axes of the
-vowel quadrilateral every phonetics textbook draws — how far the jaw is open,
-and where the tongue sits. The four corners are OO (close back), AH (open
-back), EE (close front) and EH (open front), and the eight filter bands are a
-blend of those corners. UH sits inside the square; sweep both faders together
-and you get diphthongs.
+### The vowel cube
 
-**Faders 6–8 do nothing, deliberately.** An earlier version gave each fader
-one filter band, and it was unplayable — a vowel is a position of the mouth,
-not eight independent numbers, and shaping one meant operating seven faders as
-a chord. That is the Voder's *original* problem, the one its operators trained
-for months to overcome. Two faders on the two real axes reach the whole space
-and leave a hand free.
+Three axes, and they are the three things a mouth actually does:
 
-**Volume is on the tilt** because it is the one control that wants to be a
-gesture rather than a setting. Pitch and vowel get set and left; swelling and
-ducking a phrase is what having the controller in your hands is for. Flat is
-full volume, so a controller lying on the desk is never quiet.
+```
+              ROUND = 0 (spread)          ROUND = full
+      CLOSE    OO ---------- EE            OOr -------- EEr
+                |            |              |            |
+      OPEN     AH ---------- EH            AHr -------- EHr
+              back        front           back        front
+```
 
-Every control takes over from its panel equivalent only when you actually move
-it — an 8mu plugged in but untouched never seizes a knob your hand is on.
+**Openness** is how far the jaw opens (F1). **Front** is where the tongue
+sits (F2). **Rounding** is how far the lips protrude — it lowers F2 hard and
+F1 a little, which is why it is a genuinely separate direction rather than a
+slide along the other two.
+
+The vowel axes are on **faders 1 and 8**, the outermost pair, so the two
+controls you play constantly span the hand rather than needing one finger
+twice. Faders 2, 6 and 7 are unassigned on purpose: an earlier version gave
+each fader one filter band and it was unplayable.
+
+**OH needs the third axis.** With only openness and front it sat 6.0 dB
+outside the reachable space — it is rounder than anything on the OO–AH edge,
+its F2 (840 Hz) below both back corners. Tilt the controller and it appears.
+AW and ER come with it.
+
+**Upside down mutes.** Turning the controller over is unmistakable and
+nobody does it by accident, which is exactly what a panic stop should be. It
+does not latch, and LED 5 goes dark so the panel says why it is silent.
+
+**Buttons 1 and 4 add breath while held**, on top of wherever fader 3 is
+parked — a voiced sound with a whisper of noise under it reads as breathy
+rather than buzzy. Both already did something and neither used its held
+state, so the expression is free.
+
+Every control takes over from its panel equivalent only when you actually
+move it — an 8mu plugged in but untouched never seizes a knob your hand is on.
 
 ### On the panel
 
@@ -91,6 +110,10 @@ it — an 8mu plugged in but untouched never seizes a knob your hand is on.
 |---|---|---|---|
 | **Middle / Down** | Openness | Front | Breath |
 | **Up** | Pitch | Brightness | Breath |
+
+Rounding is 8mu-only — the panel has no knob free for it, so without a
+controller the card stays on the spread face of the cube, where the ordinary
+unrounded vowels live.
 
 Switch **Down** also fires a plosive on each flick — the nearest the panel has
 to a stop key.

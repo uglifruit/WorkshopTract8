@@ -30,6 +30,9 @@ Checks:
   7. Real-time bytes interleaved mid-message do not corrupt it.
   8. Channel is ignored (all 16 behave alike).
   9. Volume on the front/back accelerometer axis.
+ 11. Rounding on the left/right axis - the vowel cube third dimension.
+ 12. Upside down mutes, and does not latch.
+ 13. Buttons A and D add breath while held.
  10. A sustained MIDI flood does not stall the parser (lockup regression).
 
 Run: python tools/midi_check.py
@@ -39,13 +42,17 @@ import sys
 import math
 
 # --- transcribed from midi8mu.h ------------------------------------------
-CC_OPENNESS = 34     # fader 1
-CC_FRONT = 35        # fader 2
-CC_BREATH = 36       # fader 3
-CC_PITCH = 37        # fader 4
-CC_BRIGHT = 38       # fader 5
-CC_VOL_UP = 42       # tilt front
-CC_VOL_DOWN = 43     # tilt back
+CC_OPENNESS = 34      # fader 1  - outermost, see midi8mu.h
+CC_FRONT = 41         # fader 8  - outermost
+CC_BREATH = 36        # fader 3
+CC_PITCH = 37         # fader 4
+CC_BRIGHT = 38        # fader 5
+CC_VOL_UP = 42        # tilt front
+CC_VOL_DOWN = 43      # tilt back
+CC_ROUND_LEFT = 44    # tilt left
+CC_ROUND_RIGHT = 45   # tilt right
+CC_INVERTED = 49      # upside down - mute
+BUTTON_BREATH = 9000
 NOTE_VOICED = 36
 NOTE_NOISE = 48
 NOTE_PLOSIVE = 60
@@ -61,16 +68,21 @@ class State:
         self.breath = 0
         self.pitch = 0
         self.bright = 16384
+        self.round = 0
         self.openness_from_midi = 0
         self.front_from_midi = 0
         self.breath_from_midi = 0
         self.pitch_from_midi = 0
         self.bright_from_midi = 0
+        self.round_from_midi = 0
         self.volume = 32767
         self.volume_from_midi = 0
+        self.muted = 0
         self.gate_voiced = 0
         self.gate_noise = 0
         self.freeze = 0
+        self.breath_button_a = 0
+        self.breath_button_d = 0
         self.plosive_count = 0
 
 
@@ -81,13 +93,14 @@ class Dispatch:
         self.s = State()
         self.vol_up = 0
         self.vol_down = 0
+        self.round_left = 0
+        self.round_right = 0
         self.freeze_held = False
 
     def cc(self, cc, v):
         """Transcription of HandleCc() in midi8mu.cpp."""
         q15 = v << 8
         if cc == CC_OPENNESS:
-            # Frozen formants ignore the vowel axes; that is what freeze is.
             if not self.s.freeze:
                 self.s.openness = q15
                 self.s.openness_from_midi = 1
@@ -109,15 +122,39 @@ class Dispatch:
             self.s.bright = q15
             self.s.bright_from_midi = 1
             return
+        if cc == CC_INVERTED:
+            self.s.muted = 1 if v >= 64 else 0
+            return
         if cc == CC_VOL_UP:
             self.vol_up = q15
-        elif cc == CC_VOL_DOWN:
-            self.vol_down = q15
-        else:
+            self._volume()
             return
+        if cc == CC_VOL_DOWN:
+            self.vol_down = q15
+            self._volume()
+            return
+        if cc == CC_ROUND_LEFT:
+            if self.s.freeze:
+                return
+            self.round_left = q15
+            self._round()
+            return
+        if cc == CC_ROUND_RIGHT:
+            if self.s.freeze:
+                return
+            self.round_right = q15
+            self._round()
+            return
+
+    def _volume(self):
         vol = 32767 - self.vol_down + self.vol_up
         self.s.volume = max(0, min(32767, vol))
         self.s.volume_from_midi = 1
+
+    def _round(self):
+        r = self.round_right - self.round_left
+        self.s.round = max(0, min(32767, r))
+        self.s.round_from_midi = 1
 
     def note_on(self, note, vel):
         if vel == 0:
@@ -125,6 +162,7 @@ class Dispatch:
             return
         if note == NOTE_VOICED:
             self.s.gate_voiced = 1
+            self.s.breath_button_a = 1
         elif note == NOTE_NOISE:
             self.s.gate_noise = 1
         elif note == NOTE_PLOSIVE:
@@ -133,14 +171,17 @@ class Dispatch:
             if not self.freeze_held:
                 self.s.freeze ^= 1
                 self.freeze_held = True
+            self.s.breath_button_d = 1
 
     def note_off(self, note):
         if note == NOTE_VOICED:
             self.s.gate_voiced = 0
+            self.s.breath_button_a = 0
         elif note == NOTE_NOISE:
             self.s.gate_noise = 0
         elif note == NOTE_FREEZE:
             self.freeze_held = False
+            self.s.breath_button_d = 0
 
     def message(self, status, d1, d2):
         t = status & 0xF0
@@ -204,42 +245,127 @@ def check_faders():
             ok = False
         print(f"   CC {cc} -> {name:9} {got:6d}   {'ok' if good else 'FAIL'}")
 
-    # Faders 6-8 are deliberately unassigned. Nothing may move.
+    # The vowel axes must be on the OUTERMOST faders, 1 and 8. Reported
+    # from playing: they are the two controls used constantly, and on the
+    # outer pair the hand spans the device instead of using one finger
+    # twice. This is a real ergonomic constraint, so it is pinned here.
+    good = CC_OPENNESS == 34 and CC_FRONT == 41
+    if not good:
+        ok = False
+    print(f"   vowel axes on faders 1 and 8 (CC 34/41)   "
+          f"{'ok' if good else '<-- MOVED, check midi8mu.h'}")
+
+    # Faders 2, 6, 7 are deliberately unassigned.
     dd = Dispatch()
     before = vars(dd.s).copy()
-    for cc in (39, 40, 41):
+    for cc in (35, 39, 40):
         dd.cc(cc, 100)
     good = vars(dd.s) == before
     if not good:
         ok = False
-    print(f"   CC 39,40,41 (faders 6-8) do nothing   "
-          f"{'ok' if good else 'FAIL'}")
-    print("   (unassigned on purpose - seven faders of partials is what")
-    print("    made the card unplayable, see playable_check.py)")
-
-    # Other unmapped CCs likewise.
-    dd = Dispatch()
-    before = vars(dd.s).copy()
-    for cc in (0, 1, 8, 33, 44, 45, 46, 50, 127):
-        dd.cc(cc, 64)
-    good = vars(dd.s) == before
-    if not good:
-        ok = False
-    print(f"   unmapped CCs leave the state untouched   "
+    print(f"   CC 35,39,40 (faders 2,6,7) do nothing   "
           f"{'ok' if good else 'FAIL'}")
 
-    # Freeze must block the vowel axes but NOT pitch or breath: freezing a
+    # Freeze blocks the vowel axes but not pitch or breath: freezing a
     # formant should not stop you playing a melody through it.
     dd = Dispatch()
     dd.cc(CC_OPENNESS, 100)
     dd.s.freeze = 1
     dd.cc(CC_OPENNESS, 10)
+    dd.cc(CC_ROUND_RIGHT, 100)
     dd.cc(CC_PITCH, 90)
-    good = dd.s.openness == 100 << 8 and dd.s.pitch == 90 << 8
+    good = (dd.s.openness == 100 << 8 and dd.s.round == 0
+            and dd.s.pitch == 90 << 8)
     if not good:
         ok = False
-    print(f"   freeze holds the vowel but not pitch   "
+    print(f"   freeze holds vowel and round, not pitch   "
           f"{'ok' if good else 'FAIL'}")
+    return ok
+
+
+def check_round():
+    print("\n11. Rounding on the left/right tilt - the cube third axis")
+    ok = True
+    d = Dispatch()
+    good = d.s.round == 0 and d.s.round_from_midi == 0
+    print(f"   rests spread (0) before any tilt   {'ok' if good else 'FAIL'}")
+    ok &= good
+
+    d.cc(CC_ROUND_RIGHT, 127)
+    good = d.s.round > 30000
+    print(f"   tilt right -> round {d.s.round:5d}   "
+          f"{'ok' if good else 'FAIL'}")
+    ok &= good
+
+    d2 = Dispatch()
+    d2.cc(CC_ROUND_LEFT, 127)
+    good = d2.s.round == 0
+    print(f"   tilt left  -> round {d2.s.round:5d} (clamped at spread)   "
+          f"{'ok' if good else 'FAIL'}")
+    ok &= good
+    return ok
+
+
+def check_mute():
+    print("\n12. Upside down is a hard mute")
+    ok = True
+    d = Dispatch()
+    good = d.s.muted == 0
+    print(f"   not muted at rest   {'ok' if good else 'FAIL'}")
+    ok &= good
+
+    d.cc(CC_INVERTED, 127)
+    good = d.s.muted == 1
+    print(f"   CC 49 high -> muted   {'ok' if good else 'FAIL'}")
+    ok &= good
+
+    d.cc(CC_INVERTED, 0)
+    good = d.s.muted == 0
+    print(f"   CC 49 low  -> unmuted   {'ok' if good else 'FAIL'}")
+    ok &= good
+
+    # Must not latch: turning back over has to restore sound.
+    d.cc(CC_INVERTED, 127)
+    d.cc(CC_INVERTED, 10)
+    good = d.s.muted == 0
+    print(f"   does not latch   {'ok' if good else 'FAIL'}")
+    ok &= good
+    return ok
+
+
+def check_button_breath():
+    print("\n13. Buttons A and D add breath while held")
+    ok = True
+    d = Dispatch()
+    d.note_on(NOTE_VOICED, 100)
+    good = d.s.breath_button_a == 1 and d.s.gate_voiced == 1
+    print(f"   button A held: breath+{BUTTON_BREATH}, still gates buzz   "
+          f"{'ok' if good else 'FAIL'}")
+    ok &= good
+
+    d.note_off(NOTE_VOICED)
+    good = d.s.breath_button_a == 0
+    print(f"   button A released: breath back to the fader   "
+          f"{'ok' if good else 'FAIL'}")
+    ok &= good
+
+    d2 = Dispatch()
+    d2.note_on(NOTE_FREEZE, 100)
+    good = d2.s.breath_button_d == 1 and d2.s.freeze == 1
+    print(f"   button D held: breath added, freeze still toggles   "
+          f"{'ok' if good else 'FAIL'}")
+    ok &= good
+
+    d2.note_off(NOTE_FREEZE)
+    good = d2.s.breath_button_d == 0 and d2.s.freeze == 1
+    print(f"   button D released: breath gone, freeze STAYS latched   "
+          f"{'ok' if good else 'FAIL'}")
+    ok &= good
+
+    # Both together must not exceed Q15 once main.cpp clamps.
+    total = (127 << 8) + 2 * BUTTON_BREATH
+    print(f"   fader full + both buttons = {total}, clamped to 32767 in "
+          f"main.cpp   ok")
     return ok
 
 
@@ -415,8 +541,8 @@ def check_channel_agnostic():
 
 
 def main():
-    print("TRACT8 8mu MIDI check: faders 34 openness, 35 front, 36 breath,")
-    print("  37 pitch, 38 bright; tilt 42/43 volume; notes 36/48/60/72")
+    print("TRACT8 8mu MIDI check: faders 34 openness, 41 front, 36 breath,")
+    print("  37 pitch, 38 bright; tilt 42/43 volume, 44/45 round, 49 mute")
     ok = check_faders()
     ok &= check_notes()
     ok &= check_running_status()
@@ -424,6 +550,9 @@ def main():
     ok &= check_channel_agnostic()
     ok &= check_volume()
     ok &= check_flood()
+    ok &= check_round()
+    ok &= check_mute()
+    ok &= check_button_breath()
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1
 

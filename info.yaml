@@ -3,7 +3,7 @@ Name: TRACT8
 Description: An eight-band Voder - the 1939 Bell Labs talking machine - played by hand from a Music Thing 8mu over USB MIDI Host, one fader per formant band, or from the card's own knobs.
 Language: C++ (ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: "1.3.0"
+Version: "1.4.0"
 Status: Working on hardware
 License: MIT
 repository: https://github.com/uglifruit/WorkshopTract8
@@ -26,7 +26,7 @@ contact:
 
 uf2:
   - path: UF2/tract8.uf2
-    name: TRACT8 1.3.0
+    name: TRACT8 1.4.0
 
 tags:
   - synth
@@ -51,20 +51,26 @@ summary: |
   playable rather than merely programmable.<br><br>
 
   Plug an 8mu into the front USB-C jack and it works immediately, with
-  nothing to configure. Two faders place a point in the vowel space - one
-  for how open the mouth is, one for whether the tongue is forward or back -
-  and every vowel lives somewhere in that square, with diphthongs on the way
-  between. A third fader is breath, the buzz-to-noise balance; a fourth is
-  pitch; a fifth is brightness. Tilting the controller forward and back is
+  nothing to configure. The vowel is a point in a three-dimensional space -
+  how open the mouth is, whether the tongue is forward or back, and how far
+  the lips are rounded - and every vowel lives somewhere in that cube, with
+  diphthongs on the way between. Openness and front are the outermost two
+  faders, 1 and 8, so the hand spans the device; rounding is the left-right
+  tilt of the controller. Fader 3 is breath, the buzz-to-noise balance,
+  fader 4 is pitch and fader 5 is brightness. Tilting forward and back is
   volume, so a phrase can be swelled and ducked without letting go of
-  anything. The four buttons gate the buzz, gate the noise, fire plosive
-  consonants and latch a formant freeze.<br><br>
+  anything, and turning the whole thing upside down is a mute.<br><br>
 
-  Three faders are deliberately left unassigned. An earlier version gave
-  each fader one filter band and it was unplayable: a vowel is a position of
-  the mouth, not eight independent numbers, and shaping one meant operating
-  seven faders at once - which is the Voder original problem, the one its
-  operators trained for months to overcome.<br><br>
+  The four buttons gate the buzz, gate the noise, fire plosive consonants
+  and latch a formant freeze; the first and last also add a little breath
+  while held, so a voiced sound can be made breathy without reaching for
+  the fader.<br><br>
+
+  Faders 2, 6 and 7 are deliberately left unassigned. An earlier version
+  gave each fader one filter band and it was unplayable: a vowel is a
+  position of the mouth, not eight independent numbers, and shaping one
+  meant operating seven faders at once - which is the Voder original
+  problem, the one its operators trained for months to overcome.<br><br>
 
   With no controller attached the card is still complete. Knob 1 morphs
   through six vowels, Knob 2 opens and closes the mouth, and Knob 3

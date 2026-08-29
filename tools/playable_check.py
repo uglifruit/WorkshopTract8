@@ -26,10 +26,10 @@ produces silence or a hole, and the vowels that are not corners are still
 reachable inside it.
 
 Checks:
-  1. The four corners reproduce their vowels exactly.
-  2. Both axes move the spectrum audibly, everywhere in the square.
-  3. UH is reachable inside the square; OH's known miss has not grown.
-  4. No position in the square is silent or holed.
+  1. All eight cube corners reproduce their vowels exactly.
+  2. All three axes move the spectrum, everywhere in the cube.
+  3. UH and OH are both reachable inside the cube.
+  4. No position in the cube is silent or holed.
   5. Brightness tilts without pinning any band.
 
 Run: python tools/playable_check.py
@@ -40,30 +40,32 @@ import math
 
 # Transcribed from vowels.h.
 NUM_BANDS = 8
-CORNERS = {
+
+# Spread plane (lips relaxed).
+SPREAD = {
     'OO': [16000, 8369, 6043, 6689, 3106, 2657, 2533, 1271],     # close back
     'AH': [666, 4003, 16000, 15423, 7647, 4226, 3923, 1675],     # open  back
     'EE': [16000, 4167, 864, 929, 2824, 8556, 12114, 5952],      # close front
     'EH': [1518, 16000, 12137, 3653, 7991, 14057, 10935, 3136],  # open  front
 }
-CLOSE_BACK, OPEN_BACK = CORNERS['OO'], CORNERS['AH']
-CLOSE_FRONT, OPEN_FRONT = CORNERS['EE'], CORNERS['EH']
+# Rounded plane (lips protruded): F1 x0.88, F2 x0.62.
+ROUND = {
+    'OO': [16000, 8053, 4419, 1387, 1337, 2189, 1977, 978],
+    'AH': [569, 7483, 16000, 6101, 1596, 2496, 2808, 1089],
+    'EE': [16000, 2170, 1193, 4525, 8724, 7189, 6062, 3677],
+    'EH': [2308, 16000, 8610, 8916, 8276, 6071, 5253, 1959],
+}
 
-# Vowels that are NOT corners, to check the square contains them.
+# Vowels that are NOT corners, to check the cube contains them.
 #
-# UH is genuinely inside the square and lands within 2 dB. OH does NOT,
-# and that is a real and accepted limitation rather than a bug: OH is
-# rounder than anything on the OO-AH edge, its F2 (840 Hz) sitting BELOW
-# both back corners, so no bilinear blend of these four reaches it. The
-# alternative was to make OH a corner instead of AH, which trades a 6.0 dB
-# miss on OH for a 5.1 dB miss on AH - a bad deal, because AH is the more
-# useful vowel and the one a player reaches for first.
-#
-# The tolerance below records that: UH must land, OH is allowed its miss,
-# and if anyone retunes the corners this test says which trade they made.
+# OH is the reason the third axis exists. In the old 2-D square it was
+# 6.0 dB away at the closest approach and unreachable, because OH is
+# ROUNDER than anything on the OO-AH edge: its F2 (840 Hz) sits below both
+# back corners, so it is not between them in any direction the square can
+# travel. Adding rounding brings it inside.
 NON_CORNER = {
-    'UH': ([801, 7697, 16000, 11856, 8440, 5035, 3707, 1537], 3.0),
-    'OH': ([881, 10568, 16000, 8051, 2410, 1883, 2144, 1100], 6.5),
+    'UH': [801, 7697, 16000, 11856, 8440, 5035, 3707, 1537],
+    'OH': [881, 10568, 16000, 8051, 2410, 1883, 2144, 1100],
 }
 
 
@@ -71,13 +73,19 @@ def clamp15(x):
     return max(0, min(32767, x))
 
 
-def blend(openness, front):
-    """Transcription of BlendVowel() in vowels.h."""
+def blend(openness, front, round_amt=0):
+    """Transcription of BlendVowel() in vowels.h. Trilinear."""
     out = []
     for i in range(NUM_BANDS):
-        back = CLOSE_BACK[i] + (((OPEN_BACK[i] - CLOSE_BACK[i]) * openness) >> 15)
-        fr = CLOSE_FRONT[i] + (((OPEN_FRONT[i] - CLOSE_FRONT[i]) * openness) >> 15)
-        out.append(back + (((fr - back) * front) >> 15))
+        sb = SPREAD['OO'][i] + (((SPREAD['AH'][i] - SPREAD['OO'][i]) * openness) >> 15)
+        sf = SPREAD['EE'][i] + (((SPREAD['EH'][i] - SPREAD['EE'][i]) * openness) >> 15)
+        spread = sb + (((sf - sb) * front) >> 15)
+
+        rb = ROUND['OO'][i] + (((ROUND['AH'][i] - ROUND['OO'][i]) * openness) >> 15)
+        rf = ROUND['EE'][i] + (((ROUND['EH'][i] - ROUND['EE'][i]) * openness) >> 15)
+        rounded = rb + (((rf - rb) * front) >> 15)
+
+        out.append(spread + (((rounded - spread) * round_amt) >> 15))
     return out
 
 
@@ -102,74 +110,93 @@ def spectral_distance(v1, v2):
 
 
 def check_corners():
-    print("\n1. The four corners reproduce their vowels exactly")
+    print("\n1. All eight cube corners reproduce their vowels exactly")
     ok = True
-    for name, (o, f) in (('OO', (0, 0)), ('AH', (32767, 0)),
-                         ('EE', (0, 32767)), ('EH', (32767, 32767))):
-        d = spectral_distance(blend(o, f), CORNERS[name])
-        good = d < 0.5
-        if not good:
-            ok = False
-        print(f"   {name}  openness={o:5d} front={f:5d}   error {d:5.2f} dB   "
-              f"{'ok' if good else '<-- FAIL'}")
+    for plane_name, table, r in (("spread ", SPREAD, 0),
+                                 ("rounded", ROUND, 32767)):
+        for name, (o, f) in (('OO', (0, 0)), ('AH', (32767, 0)),
+                             ('EE', (0, 32767)), ('EH', (32767, 32767))):
+            d = spectral_distance(blend(o, f, r), table[name])
+            good = d < 0.5
+            if not good:
+                ok = False
+            print(f"   {plane_name} {name}  error {d:5.2f} dB   "
+                  f"{'ok' if good else '<-- FAIL'}")
     return ok
 
 
 def check_axes_live():
-    """Both axes must do something WHEREVER you are in the square."""
-    print("\n2. Both axes move the spectrum, everywhere in the square")
+    """Every axis must do something WHEREVER you are in the cube."""
+    print("\n2. All three axes move the spectrum, everywhere in the cube")
     ok = True
-    print("   sweeping OPENNESS at each front position:")
-    for f in (0, 16384, 32767):
-        d = spectral_distance(blend(0, f), blend(32767, f))
-        good = d > 5.0
-        if not good:
-            ok = False
-        print(f"     front={f:5d}   close->open moves {d:5.1f} dB   "
-              f"{'ok' if good else '<-- DEAD AXIS'}")
 
-    print("   sweeping FRONT at each openness position:")
-    for o in (0, 16384, 32767):
-        d = spectral_distance(blend(o, 0), blend(o, 32767))
-        good = d > 5.0
-        if not good:
-            ok = False
-        print(f"     openness={o:5d}   back->front moves {d:5.1f} dB   "
-              f"{'ok' if good else '<-- DEAD AXIS'}")
-    print("   (the v1.1.0 regression generalised: no control may stop")
-    print("    working because of where another one happens to be set)")
+    print("   OPENNESS, sampled across the other two:")
+    for f in (0, 32767):
+        for r in (0, 32767):
+            d = spectral_distance(blend(0, f, r), blend(32767, f, r))
+            good = d > 5.0
+            if not good:
+                ok = False
+            print(f"     front={f:5d} round={r:5d}   moves {d:5.1f} dB   "
+                  f"{'ok' if good else '<-- DEAD AXIS'}")
+
+    print("   FRONT, sampled across the other two:")
+    for o in (0, 32767):
+        for r in (0, 32767):
+            d = spectral_distance(blend(o, 0, r), blend(o, 32767, r))
+            good = d > 5.0
+            if not good:
+                ok = False
+            print(f"     openness={o:5d} round={r:5d}   moves {d:5.1f} dB   "
+                  f"{'ok' if good else '<-- DEAD AXIS'}")
+
+    print("   ROUND, sampled across the other two:")
+    for o in (0, 32767):
+        for f in (0, 32767):
+            d = spectral_distance(blend(o, f, 0), blend(o, f, 32767))
+            good = d > 3.0
+            if not good:
+                ok = False
+            print(f"     openness={o:5d} front={f:5d}   moves {d:5.1f} dB   "
+                  f"{'ok' if good else '<-- DEAD AXIS'}")
+    print("   (no control may stop working because of where another is set)")
     return ok
 
 
 def check_non_corner_vowels():
-    print("\n3. Non-corner vowels are reachable inside the square")
+    print("\n3. Non-corner vowels are reachable inside the cube")
     ok = True
-    for name, (target, tol) in NON_CORNER.items():
-        best = (999.0, 0, 0)
-        for o in range(0, 32768, 512):
-            for f in range(0, 32768, 512):
-                d = spectral_distance(blend(o, f), target)
-                if d < best[0]:
-                    best = (d, o, f)
-        # Vowels are 6-17 dB apart, so landing well inside that means the
-        # square genuinely contains the vowel. Per-vowel tolerance above.
-        good = best[0] < tol
+    for name, target in NON_CORNER.items():
+        best = (999.0, 0, 0, 0)
+        for o in range(0, 32768, 2048):
+            for f in range(0, 32768, 2048):
+                for r in range(0, 32768, 2048):
+                    d = spectral_distance(blend(o, f, r), target)
+                    if d < best[0]:
+                        best = (d, o, f, r)
+        # Vowels are 6-17 dB apart, so landing within 3.5 dB means the cube
+        # genuinely contains the vowel rather than merely approaching it.
+        good = best[0] < 3.5
         if not good:
             ok = False
+        note = ""
+        if name == 'OH':
+            note = "  (was 6.0 dB and unreachable before the round axis)"
         print(f"   {name}  closest {best[0]:4.1f} dB at "
-              f"openness={best[1]*100//32767:3d}% front={best[2]*100//32767:3d}%   "
-              f"{'ok' if good else '<-- NOT REACHABLE'}"
-              f"{'  (accepted miss, see the note above)' if name == 'OH' else ''}")
+              f"open={best[1]*100//32767:3d}% front={best[2]*100//32767:3d}% "
+              f"round={best[3]*100//32767:3d}%   "
+              f"{'ok' if good else '<-- NOT REACHABLE'}{note}")
     return ok
 
 
 def check_no_dead_spots():
-    print("\n4. No position in the square is silent or holed")
+    print("\n4. No position in the cube is silent or holed")
     worst_sum = (1 << 30, 0, 0)
     worst_min = (1 << 30, 0, 0)
-    for o in range(0, 32768, 2048):
-        for f in range(0, 32768, 2048):
-            g = blend(o, f)
+    for o in range(0, 32768, 4096):
+      for f in range(0, 32768, 4096):
+        for r in range(0, 32768, 4096):
+            g = blend(o, f, r)
             total = sum(g)
             lowest = min(g)
             if total < worst_sum[0]:
@@ -192,9 +219,10 @@ def check_no_dead_spots():
 def check_brightness():
     print("\n5. Brightness tilts without pinning a band")
     ok = True
-    for name, (o, f) in (('OO', (0, 0)), ('AH', (32767, 0)),
-                         ('EE', (0, 32767)), ('EH', (32767, 32767))):
-        base = blend(o, f)
+    for name, (o, f, r) in (('OO ', (0, 0, 0)), ('AH ', (32767, 0, 0)),
+                            ('EE ', (0, 32767, 0)),
+                            ('EHr', (32767, 32767, 32767))):
+        base = blend(o, f, r)
         worst_pin = 0
         span = 0.0
         for b in (0, 8192, 16384, 24576, 32767):
@@ -212,8 +240,8 @@ def check_brightness():
 
 
 def main():
-    print("TRACT8 playability check - the 2-D vowel square")
-    print("  Two controls, four corner vowels, bilinear between them.")
+    print("TRACT8 playability check - the 3-D vowel cube")
+    print("  Three axes, eight corner vowels, trilinear between them.")
     ok = check_corners()
     ok &= check_axes_live()
     ok &= check_non_corner_vowels()

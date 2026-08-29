@@ -11,7 +11,9 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
-## Current status: v1.3.0, the partials left the interface
+## Current status: v1.4.0, the vowel cube
+
+## Previously: v1.3.0, the partials left the interface
 
 **Read the control-model section before changing any mapping.**
 
@@ -374,7 +376,57 @@ loudly. WorkshopSpectral modelled 51% and measured 231% on real silicon. **CV
 Out 2 is the authority on this card's cost.** Once TRACT8 has run on hardware,
 replace the prediction with the reading.
 
-## The control model (v1.3.0) - the partials are gone
+## The vowel cube (v1.4.0)
+
+Four changes, all from playing, and the first is the interesting one.
+
+### Rounding is a real third axis, and it is what OH needed
+
+v1.3.0 shipped with a 2-D vowel square and OH recorded as an accepted miss
+at 6.0 dB. The user asked whether the other tilt directions could "put OH in
+a third direction on the cube of vowel sounds" - which is exactly right, and
+better than accepting the miss.
+
+OH is unreachable in the square because it is **rounder** than anything on
+the OO-AH edge: its F2 (840 Hz) sits BELOW both back corners, so it is not
+between them in any direction the square can travel. Lip rounding is a
+genuinely independent dimension of vowel space - protruding the lips
+lengthens the tract and lowers every formant, hitting F2 hardest.
+
+The cube is two planes of four corners: the existing vowels, and the same
+four with F1 x0.88 and F2 x0.62. Those multipliers were fitted by minimising
+the worst reachable error across all six named vowels.
+
+**OH goes from 6.0 dB (unreachable) to 2.6 dB.** UH improves to 2.7 dB, and
+AW and ER come along free.
+
+### Faders 1 and 8, not 1 and 2
+
+Reported directly: the outermost faders are the ergonomic pair, because the
+hand spans the device instead of using one finger twice. The two vowel axes
+get played constantly, so they get the outer pair. `midi_check.py` pins the
+CC numbers so this cannot be quietly undone.
+
+### Upside down is a hard mute
+
+CC 49 is the 8mu inverted gesture. Turning the controller over is
+unmistakable and nobody does it by accident, which is what a panic stop
+should be - no aim required. It does not latch, and LED 5 goes dark so the
+panel explains the silence. (Silence with no explanation is the failure mode
+this card keeps rediscovering.)
+
+Applied after the volume scale and before the clamp, so the CV outs stay
+live while muted - useful if you are muting in order to look at something.
+
+### Buttons A and D add breath
+
+Both already did something (gate the buzz, latch freeze) and neither used
+its held state for anything, so this is free expression. They ADD to the
+fader rather than setting it, so it is a gesture on top of wherever breath
+is parked: press one over a voiced sound and it goes breathy without losing
+the pitch.
+
+## Previously: the control model (v1.3.0) - the partials are gone
 
 Second round of playing feedback, and it went deeper than the first:
 
@@ -512,7 +564,11 @@ counts against 132 before, with the worst case at 1568 of 2047.
 
 ## Still to do
 
-- [ ] Confirm the 2-D vowel square is actually playable - that is
+- [ ] Confirm the vowel CUBE is playable, and that rounding on the
+      left/right tilt is a gesture that can be held steady while the
+      faders move. If it fights the volume tilt, the two axes may
+      need swapping.
+- [ ] Confirm the 2-D square underneath is still playable - that is
       the whole point of v1.3.0 and it is untested on hardware.
 - [ ] Confirm the lockup is actually gone — it took sustained fader plus
       accelerometer traffic to provoke, so try to reproduce it deliberately.

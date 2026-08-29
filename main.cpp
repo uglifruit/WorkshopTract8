@@ -27,6 +27,7 @@
 #include "shared.h"
 #include "voder.h"
 #include "vowels.h"
+#include "midi8mu.h"  // for kButtonBreath
 
 using namespace tract8;
 
@@ -118,8 +119,13 @@ class VoderCard : public ComputerCard {
     g_state.breath_from_midi = 0;
     g_state.pitch_from_midi = 0;
     g_state.bright_from_midi = 0;
+    g_state.round = 0;
+    g_state.round_from_midi = 0;
     g_state.volume = 32767;
     g_state.volume_from_midi = 0;
+    g_state.muted = 0;
+    g_state.breath_button_a = 0;
+    g_state.breath_button_d = 0;
     g_state.gate_voiced = 0;
     g_state.gate_noise = 0;
     g_state.freeze = 0;
@@ -127,7 +133,7 @@ class VoderCard : public ComputerCard {
     g_state.plosive_count = 0;
 
     int32_t init_gains[kNumBands];
-    BlendVowel(panel_openness_, panel_front_, init_gains);
+    BlendVowel(panel_openness_, panel_front_, 0, init_gains);
     for (int i = 0; i < kNumBands; i++) {
       g_state.band_gain[i] = Clamp15(init_gains[i]);
     }
@@ -181,8 +187,17 @@ class VoderCard : public ComputerCard {
     }
     p.f0_milli_hz = f0;
 
-    // Breath: fader 3 if the 8mu has sent it, otherwise Knob 3.
-    p.source_mix = g_state.breath_from_midi ? g_state.breath : panel_breath_;
+    // Breath: fader 3 if the 8mu has sent it, otherwise Knob 3, plus
+    // whatever buttons A and D are adding while held.
+    //
+    // The buttons ADD rather than set, so they are a gesture on top of
+    // wherever the fader is parked - press one over a voiced sound and it
+    // turns breathy without losing the pitch. Both buttons together give
+    // twice as much, which is the obvious reading of holding both.
+    int32_t breath = g_state.breath_from_midi ? g_state.breath : panel_breath_;
+    if (g_state.breath_button_a) breath += kButtonBreath;
+    if (g_state.breath_button_d) breath += kButtonBreath;
+    p.source_mix = Clamp15(breath);
 
     // Gates. The 8mu's buttons and a patched gate are OR'd - either opens a
     // source. With no controller and nothing patched, both sources are open
@@ -265,6 +280,16 @@ class VoderCard : public ComputerCard {
     if (g_state.volume_from_midi) {
       out = (int32_t)(((int64_t)out * g_state.volume) >> 15);
     }
+
+    // Upside down is a hard mute. Turning the controller over is an
+    // unmistakable, deliberate gesture that nobody makes by accident,
+    // which is exactly what a panic stop should be - no aim required.
+    //
+    // Applied after the volume scale and before the clamp, so it silences
+    // the audio outputs without disturbing the CV outs: the energy and
+    // DSP-load readings stay live while muted, which is what you want if
+    // you are muting to look at something.
+    if (g_state.muted) out = 0;
 
     // Diagnostic state for the LED display. Kept because the first
     // hardware run was silent and there was no way to see WHY from the
@@ -389,9 +414,15 @@ class VoderCard : public ComputerCard {
     const int32_t front =
         g_state.front_from_midi ? g_state.front : panel_front_;
 
-    // Two axes, four corner vowels, bilinear between them. See vowels.h.
+    // Rounding: the third vowel axis, from the 8mu left/right tilt. The
+    // panel has no knob free for it, so with no controller attached the
+    // card stays on the spread face of the cube - which is where the
+    // ordinary unrounded vowels live, so nothing is lost.
+    const int32_t round_amt = g_state.round_from_midi ? g_state.round : 0;
+
+    // Three axes, eight corner vowels, trilinear between them. vowels.h.
     int32_t gains[kNumBands];
-    BlendVowel(openness, front, gains);
+    BlendVowel(openness, front, round_amt, gains);
 
     // Brightness tilts the result toward the high or low bands.
     // Multiplicative, so it cannot drive a band negative or pin one at
@@ -455,7 +486,11 @@ class VoderCard : public ComputerCard {
     LedOn(4, g_state.midi_connected != 0);
 
     // LED 5: voiced/unvoiced, or full brightness while frozen.
-    if (g_state.freeze) {
+    if (g_state.muted) {
+      // Dark while muted, so the panel says why it is silent. Silence with
+      // no explanation is the one failure mode this card keeps finding.
+      LedBrightness(5, 0);
+    } else if (g_state.freeze) {
       LedBrightness(5, 4095);
     } else {
       LedBrightness(5, voder_.Voiced() ? 3000 : 400);

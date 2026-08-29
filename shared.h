@@ -22,51 +22,68 @@
 #include <stdint.h>
 
 struct VoderState {
-  // --- the five 8mu faders that matter -------------------------------
+  // --- the five mapped 8mu faders -------------------------------------
   //
-  // Fader 1  OPENNESS   vowel square, close <-> open   (F1)
-  // Fader 2  FRONT      vowel square, back  <-> front  (F2)
-  // Fader 3  BREATH     buzz <-> noise
-  // Fader 4  PITCH      F0, 50..500 Hz
-  // Fader 5  BRIGHT     spectral tilt
+  // Fader 1 (CC 34)  OPENNESS   vowel cube, close <-> open
+  // Fader 8 (CC 41)  FRONT      vowel cube, back  <-> front
+  // Fader 3 (CC 36)  BREATH     buzz <-> noise
+  // Fader 4 (CC 37)  PITCH      F0
+  // Fader 5 (CC 38)  BRIGHT     spectral tilt
   //
-  // Faders 6-8 are unassigned. That is deliberate: this card was
-  // unplayable when every fader did something, because a vowel is not
-  // eight independent numbers to a player. Five controls that each mean
-  // something beat eight that need to be operated as a chord.
+  // The vowel axes are on the OUTERMOST faders, 1 and 8, so the two
+  // controls that get played constantly span the hand rather than needing
+  // the same finger twice. Faders 2, 6 and 7 are unassigned on purpose.
   int32_t openness;      // Q15
   int32_t front;         // Q15
   int32_t breath;        // Q15, 0 = all buzz, 32767 = all noise
   int32_t pitch;         // Q15, mapped to F0 in main.cpp
   int32_t bright;        // Q15, 16384 = flat
 
-  // One flag per control, set the first time the 8mu sends it. Until
-  // then the panel keeps that control. A controller sitting plugged in
-  // but untouched must never seize a knob the player has a hand on.
+  // Third vowel axis: lip rounding, from the left/right tilt. 0 = spread,
+  // 32767 = rounded. This is what makes OH reachable - see vowels.h.
+  int32_t round;
+
+  // One flag per control, set the first time the 8mu sends it. Until then
+  // the panel keeps that control. A controller plugged in but untouched
+  // must never seize a knob the player has a hand on.
   uint8_t openness_from_midi;
   uint8_t front_from_midi;
   uint8_t breath_from_midi;
   uint8_t pitch_from_midi;
   uint8_t bright_from_midi;
+  uint8_t round_from_midi;
 
-  // --- accelerometer --------------------------------------------------
-  // Front/back tilt is VOLUME. It was pitch until playing showed that
-  // pitch wants to be set and left, while volume wants a gesture - the
-  // whole point of holding the controller is to be able to swell and
-  // duck a phrase without letting go of anything.
+  // --- accelerometer ---------------------------------------------------
+  // Front/back tilt is VOLUME: the one control that wants to be a gesture
+  // rather than a setting. Rests at unity so a controller lying flat is at
+  // full volume.
   int32_t volume;        // Q15, 32767 = unity
   uint8_t volume_from_midi;
 
-  // --- band gains handed to the filter bank ---------------------------
-  // Computed in main.cpp from the vowel square. Nothing else writes it;
-  // it lives here so the LEDs can display it.
+  // Set while the 8mu is upside down (CC 49). Hard mute - turning the
+  // controller over is an unmistakable, deliberate gesture, and having a
+  // panic stop that needs no aim is worth a gesture nobody makes by
+  // accident.
+  uint8_t muted;
+
+  // --- band gains handed to the filter bank ----------------------------
+  // Computed in main.cpp from the vowel cube. Nothing else writes it; it
+  // lives here so the LEDs can display it.
   int32_t band_gain[8];
 
-  // --- buttons ---------------------------------------------------------
+  // --- buttons ----------------------------------------------------------
   uint8_t gate_voiced;
   uint8_t gate_noise;
   uint8_t freeze;
   uint8_t midi_connected;
+
+  // Buttons A and D add a little breath while held, on top of whatever
+  // fader 3 is set to. Both already do something (gate the buzz, latch
+  // freeze) and neither used its held state for anything, so this is free
+  // expression: a voiced sound with a whisper of noise under it reads as
+  // breathy rather than buzzy.
+  uint8_t breath_button_a;
+  uint8_t breath_button_d;
 
   // Counted, not flagged - a flag set on Core 1 can be missed entirely or
   // fired twice depending on how the ISR interleaves with it.
