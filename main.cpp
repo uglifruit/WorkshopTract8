@@ -151,6 +151,7 @@ class VoderCard : public ComputerCard {
     formant_cv_ = 0;
     babble_decay_ = 16384;
     babble_count_ = 0;
+    babble_open_ = false;
     gate_seen_ = false;
     babble_ = false;
     diag_use_ext_ = false;
@@ -192,25 +193,6 @@ class VoderCard : public ComputerCard {
     for (int i = 0; i < kNumBands; i++) {
       g_state.band_gain[i] = Clamp15(init_gains[i]);
     }
-  }
-
-  // Convert a decay length in samples to the Q15 value TriggerPlosive
-  // expects. The engine maps its control with a squared curve, so this
-  // takes a square root - done by bisection because there is no sqrt on
-  // the hot path worth having, and this runs a few times a second at most.
-  static int32_t __not_in_flash_func(SamplesToDecayQ15)(int32_t samples) {
-    if (samples <= kPlosiveSamples) return 0;
-    if (samples >= kPlosiveMaxSamples) return 32767;
-    int32_t lo = 0, hi = 32767;
-    for (int i = 0; i < 12; i++) {          // 12 steps resolves to ~8
-      const int32_t mid = (lo + hi) >> 1;
-      const int32_t sq = (int32_t)(((int64_t)mid * mid) >> 15);
-      const int32_t len = kPlosiveSamples +
-                          (int32_t)(((int64_t)(kPlosiveMaxSamples -
-                                               kPlosiveSamples) * sq) >> 15);
-      if (len < samples) lo = mid; else hi = mid;
-    }
-    return lo;
   }
 
   // True when the 8mu is present AND has actually sent this control.
@@ -320,6 +302,13 @@ class VoderCard : public ComputerCard {
     if (any_midi_gate) {
       p.voiced_level = g_state.gate_voiced ? 32767 : 0;
       p.noise_level = g_state.gate_noise ? 32767 : 0;
+    } else if (babble_) {
+      // In BABBLE the syllable gate IS the envelope, so a held input gate
+      // becomes a stream of spoken syllables rather than one long tone.
+      // Both sources follow it, so the breath knob still decides the
+      // character of each syllable - see the note on breath as a ratio.
+      p.voiced_level = babble_open_ ? 32767 : 0;
+      p.noise_level = babble_open_ ? 32767 : 0;
     } else {
       p.voiced_level = ext_gate ? 32767 : 0;
       p.noise_level = ext_gate ? 32767 : 0;
@@ -388,29 +377,29 @@ class VoderCard : public ComputerCard {
     last_pulse1_ = pulse1;
 
     // BABBLE: a HELD gate on either pulse input chatters by itself, so a
-    // single sustained gate is enough to get the card talking. The rate
-    // follows the click decay, so Knob X speeds it up and slows it down
-    // along with everything else it does.
+    // single sustained gate is enough to get the card talking.
     //
-    // Without this the mode would still need a stream of triggers from
-    // somewhere, which defeats the point of a one-cable texture.
+    // The chatter gates the VOICE. It used to fire a plosive on every
+    // syllable, which put a click on the front of each one and made the
+    // whole mode read as percussion rather than as speech - too much, and
+    // not what the mode is for. Consonants are still available whenever
+    // they are wanted, from Pulse In 1, which triggers clicks in every
+    // mode; taking them off the automatic chatter means the player
+    // chooses when to have them rather than being given them by default.
+    //
+    // Each syllable is voiced for the first third of its period and
+    // silent for the rest, which is roughly the duty cycle of spoken
+    // syllables and reuses the separation the click length used to have.
     if (babble_ && (pulse1 || PulseIn2())) {
-      if (--babble_count_ <= 0) {
-        const int32_t period =
-            kBabbleMinPeriod +
-            (int32_t)(((int64_t)(kBabbleMaxPeriod - kBabbleMinPeriod) *
-                       babble_decay_) >> 15);
-        babble_count_ = period;
-
-        // The click length is tied to a THIRD of the period rather than
-        // set independently, so a burst always finishes well before the
-        // next one starts. That separation is what makes it read as
-        // chatter; letting the two be set separately allowed a long click
-        // at a fast rate, which merges into a wash.
-        voder_.TriggerPlosive(SamplesToDecayQ15(period / 3));
-      }
+      const int32_t period =
+          kBabbleMinPeriod +
+          (int32_t)(((int64_t)(kBabbleMaxPeriod - kBabbleMinPeriod) *
+                     babble_decay_) >> 15);
+      if (--babble_count_ <= 0) babble_count_ = period;
+      babble_open_ = babble_count_ > (period - period / 3);
     } else {
       babble_count_ = 0;
+      babble_open_ = false;
     }
 
     // Switch down is a momentary plosive key - the Voder's stop keys were
@@ -731,6 +720,7 @@ class VoderCard : public ComputerCard {
   int32_t panel_phase_, morph_phase_;
   int32_t formant_cv_;
   int32_t babble_decay_, babble_count_;
+  bool babble_open_;
   bool gate_seen_;
   bool babble_;
   bool diag_use_ext_, diag_gated_;

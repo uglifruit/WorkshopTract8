@@ -3,7 +3,7 @@ Name: TRACT8
 Description: An eight-band Voder - the 1939 Bell Labs talking machine - played by hand from a Music Thing 8mu over USB MIDI Host, one fader per formant band, or from the card's own knobs.
 Language: C++ (ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: "1.12.0"
+Version: "1.13.0"
 Status: Working on hardware
 License: MIT
 repository: https://github.com/uglifruit/WorkshopTract8
@@ -26,7 +26,7 @@ contact:
 
 uf2:
   - path: UF2/tract8.uf2
-    name: TRACT8 1.12.0
+    name: TRACT8 1.13.0
 
 tags:
   - synth
@@ -209,9 +209,10 @@ controls:
       x:
         name: CHATTER
         description: >
-          Chatter rate and brightness together, 2 to 20 Hz. The click
-          length follows a third of the period so syllables always
-          separate.
+          Chatter rate and brightness together, 2 to 20 Hz. Each
+          syllable is voiced for a third of its period so they always
+          separate. The chatter makes no clicks of its own - patch those
+          into Pulse In 1 if they are wanted.
       y:
         name: CHARACTER
         description: >

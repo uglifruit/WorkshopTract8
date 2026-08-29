@@ -199,8 +199,13 @@ single sustained gate with nothing else patched:
 | **Y** | Breath **against** rounding — a rounded hum at one end, a breathy whisper at the other |
 
 Hold a gate on either pulse input and it chatters by itself, 2 Hz to 20 Hz
-across Knob X. The click length is tied to a third of the chatter period, so
-syllables always separate instead of merging into a wash.
+across Knob X. Each syllable is voiced for the first third of its period, so
+they always separate instead of running together.
+
+**The chatter makes no clicks of its own** — it is a voice, not a drum. If
+you want consonants on top, patch them into **Pulse In 1**, which triggers
+clicks in every mode. That way the percussion is a choice rather than
+something the mode imposes on every syllable.
 
 Normal mode is one knob per parameter, which is right for playing
 deliberately. This is for getting a texture going in seconds.

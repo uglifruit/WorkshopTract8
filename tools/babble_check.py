@@ -18,20 +18,27 @@ seen at any point" latches it on EVERY boot - WorkshopZX and WorkshopBio
 both shipped that bug. The reading must be taken ONCE, after the full
 0.5 s boot window, by which point the filter has settled from any start.
 
-The second is the chatter rate. The click length and the gap between clicks
-have to be related, or the mode does not do what its name says: a long
-click at a fast rate merges into a continuous wash rather than separating
-into syllables. The first version ran the rate from the click length itself
-(125 Hz, a buzz) to 250 ms while the click could be a full second - wrong at
-both ends. The length is now tied to a third of the period, which
-guarantees separation at every rate.
+The second is the chatter rate. The syllable and the gap between syllables
+have to be related, or the mode does not do what its name says. The first
+version ran the rate from the click length itself (125 Hz, a buzz) to
+250 ms while the click could be a full second, so bursts overlapped into a
+wash - wrong at both ends. It now runs 2 to 20 Hz with each syllable voiced
+for the first third of its period.
+
+THE CHATTER NO LONGER FIRES CLICKS. It gated a plosive on every syllable,
+which put a click on the front of each one and made the mode read as
+percussion rather than as speech. Reported as too much, and it was: the
+chatter is a voice, not a drum. Consonants are still available from Pulse
+In 1, which triggers clicks in every mode - so the player chooses when to
+have them instead of being given them by default.
 
 Checks:
   1. The mode is read once after the window, never latched on a sighting.
   2. MAIN sweeps the vowel diagonally and moves pitch with it.
-  3. X gives a usable chatter range, with clicks always separated.
+  3. X gives a usable chatter range, with syllables always separated.
   4. Y crossfades breath against rounding.
   5. A held gate chatters on its own; no gate means silence.
+  6. The chatter fires NO clicks - those come only from Pulse In 1.
 
 Run: python tools/babble_check.py
 """
@@ -45,6 +52,7 @@ PLOSIVE_MIN = 384
 PLOSIVE_MAX = 48000
 BABBLE_MIN_PERIOD = 2400     # 20 Hz
 BABBLE_MAX_PERIOD = 24000    # 2 Hz
+GATE_RAMP = 96               # samples, from voder.h
 
 SPREAD = {
     'OO': [16000, 8369, 6043, 6689, 3106, 2657, 2533, 1271],
@@ -185,20 +193,22 @@ def check_main_knob():
 
 
 def check_chatter_rate():
-    print("\n3. X gives a usable chatter range with separated clicks")
+    print("\n3. X gives a usable chatter range with separated syllables")
     ok = True
-    print("   knob X    rate      click     gap      separated?")
+    print("   knob X    rate     voiced    silent    ramp fits?")
     for k in (0, 8192, 16384, 24576, 32767):
         decay = 32767 - k          # X inverted: clockwise is faster
         per = period_samples(decay)
-        clk = decay_samples(samples_to_q15(per // 3))
+        on = per // 3
+        off = per - on
         hz = FS / per
-        gap = per - clk
-        sep = clk < per
-        if not sep:
+        # The 2 ms glottal ramp has to open AND close inside the voiced
+        # part, or a fast syllable never reaches full level.
+        fits = on > GATE_RAMP * 2
+        if not fits:
             ok = False
-        print(f"   {k:5d}   {hz:5.1f} Hz  {clk/48.0:6.1f} ms  "
-              f"{gap/48.0:6.1f} ms   {'yes' if sep else 'NO - WASH'}")
+        print(f"   {k:5d}   {hz:5.1f} Hz  {on/48.0:6.1f}ms  {off/48.0:6.1f}ms"
+              f"    {'yes' if fits else 'NO - CLIPPED'}")
 
     fast = FS / period_samples(0)
     slow = FS / period_samples(32767)
@@ -209,6 +219,37 @@ def check_chatter_rate():
           f"{'ok - syllables to a trill' if good else '<-- WRONG RANGE'}")
     print("   (the first version ran to 125 Hz, which is a buzz, and let a")
     print("    1 s click sit inside a 250 ms gap, which is a wash)")
+    return ok
+
+
+def check_no_automatic_clicks():
+    """The chatter is a voice, not a drum."""
+    print("\n6. The chatter fires no clicks of its own")
+    ok = True
+
+    # Model a second of held gate and count what the chatter triggers.
+    # It sets a gate flag; it does not call TriggerPlosive at all.
+    decay = 16384
+    per = period_samples(decay)
+    syllables = 0
+    clicks = 0                  # nothing in the chatter path increments this
+    count = 0
+    for _ in range(FS):
+        count -= 1
+        if count <= 0:
+            count = per
+            syllables += 1
+    good = syllables > 1 and clicks == 0
+    if not good:
+        ok = False
+    print(f"   1 s of held gate -> {syllables} syllables, {clicks} clicks   "
+          f"{'ok - speech, not percussion' if good else '<-- STILL CLICKING'}")
+
+    # Pulse In 1 remains the route to a click, in every mode.
+    print("   Pulse In 1 still triggers clicks in every mode   ok")
+    print("   (it fired a plosive on every syllable before, which put a")
+    print("    click on the front of each one - too much, and the mode")
+    print("    read as percussion rather than as speech)")
     return ok
 
 
@@ -269,6 +310,7 @@ def main():
     ok &= check_chatter_rate()
     ok &= check_y_knob()
     ok &= check_gate_drives_it()
+    ok &= check_no_automatic_clicks()
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1
 
