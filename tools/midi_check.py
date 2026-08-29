@@ -29,7 +29,7 @@ Checks:
   6. Running status is sustained across messages.
   7. Real-time bytes interleaved mid-message do not corrupt it.
   8. Channel is ignored (all 16 behave alike).
-  9. Volume on the front/back accelerometer axis.
+  9. Volume: bipolar front/back, full at the centre detent.
  11. Rounding on the left/right axis - the vowel cube third dimension.
  12. Mute polarity: CC 49 is HIGH when upright, LOW when turned over.
  13. Buttons A and D add breath while held.
@@ -47,10 +47,11 @@ CC_FRONT = 41         # fader 8  - outermost
 CC_BREATH = 36        # fader 3
 CC_PITCH = 37         # fader 4
 CC_BRIGHT = 38        # fader 5
-CC_ROUND_FRONT = 42   # tilt front - rounding (swapped in v1.4.2)
-CC_ROUND_BACK = 43    # tilt back  - rounding
-CC_VOL_LEFT = 44      # tilt left  - volume
-CC_VOL_RIGHT = 45     # tilt right - volume
+CC_VOLUME = 42          # tilt front/back, bipolar with a centre detent
+CC_VOLUME_PARTNER = 43  # complementary partner - not read
+CC_ROUND = 44           # tilt left/right, bipolar with a centre detent
+CC_ROUND_PARTNER = 45   # complementary partner - not read
+TILT_CENTRE = 64
 CC_NOT_INVERTED = 48  # right way up - unmute
 CC_INVERTED = 49      # upside down - mute
 BUTTON_BREATH = 9000
@@ -124,18 +125,26 @@ class Dispatch:
             self.s.muted = 1 if v < 64 else 0
             return
         # CC 48 is the complementary partner and is not read.
-        # Continuous levels, straight through. The complementary partners
-        # (CC 43, CC 45) are deliberately not read - see midi8mu.cpp.
-        if cc == CC_VOL_LEFT:
-            self.s.volume = max(0, min(32767, q15))
+        # Bipolar with a centre detent at 64, squared response. The
+        # complementary partners are deliberately not read - see
+        # midi8mu.cpp and gesture_check.py.
+        if cc == CC_VOLUME:
+            self.s.volume = 32767 - self._tilt(v)
             self.s.volume_from_midi = 1
             return
-        if cc == CC_ROUND_FRONT:
+        if cc == CC_ROUND:
             if self.s.freeze:
                 return
-            self.s.round = max(0, min(32767, q15))
+            self.s.round = self._tilt(v)
             self.s.round_from_midi = 1
             return
+
+    @staticmethod
+    def _tilt(v):
+        d = abs(v - TILT_CENTRE)
+        if d > TILT_CENTRE:
+            d = TILT_CENTRE
+        return (d * d * 32767) // (TILT_CENTRE * TILT_CENTRE)
 
     def note_on(self, note, vel):
         if vel == 0:
@@ -253,7 +262,7 @@ def check_faders():
     dd.cc(CC_OPENNESS, 100)
     dd.s.freeze = 1
     dd.cc(CC_OPENNESS, 10)
-    dd.cc(CC_ROUND_FRONT, 100)
+    dd.cc(CC_ROUND, 100)
     dd.cc(CC_PITCH, 90)
     good = (dd.s.openness == 100 << 8 and dd.s.round == 0
             and dd.s.pitch == 90 << 8)
@@ -265,27 +274,33 @@ def check_faders():
 
 
 def check_round():
-    print("\n11. Rounding on the front/back tilt - the cube third axis")
+    print("\n11. Rounding: bipolar, unrounded at the centre detent")
     ok = True
     d = Dispatch()
     good = d.s.round == 0 and d.s.round_from_midi == 0
-    print(f"   rests spread (0) before any tilt   {'ok' if good else 'FAIL'}")
+    print(f"   unrounded before any tilt   {'ok' if good else 'FAIL'}")
     ok &= good
 
-    d.cc(CC_ROUND_FRONT, 127)
-    hi = d.s.round
-    d.cc(CC_ROUND_FRONT, 0)
-    lo = d.s.round
-    good = hi > 30000 and lo < 1000
-    print(f"   CC 42: 127 -> {hi:5d}, 0 -> {lo:5d}   "
-          f"{'ok' if good else 'FAIL'}")
+    d.cc(CC_ROUND, 64)
+    good = d.s.round < 200
+    print(f"   CC 44 = 64 (level) -> round {d.s.round:5d}   "
+          f"{'ok' if good else '<-- ROUNDED AT REST'}")
     ok &= good
+
+    for v in (0, 127):
+        dd = Dispatch()
+        dd.cc(CC_ROUND, v)
+        good = dd.s.round > 30000
+        if not good:
+            ok = False
+        print(f"   CC 44 = {v:3d} (extreme) -> round {dd.s.round:5d}   "
+              f"{'ok - toward OO' if good else '<-- FAIL'}")
 
     d2 = Dispatch()
-    d2.cc(CC_ROUND_FRONT, 100)
+    d2.cc(CC_ROUND, 100)
     before = d2.s.round
     d2.s.freeze = 1
-    d2.cc(CC_ROUND_FRONT, 10)
+    d2.cc(CC_ROUND, 64)
     good = d2.s.round == before
     print(f"   freeze holds rounding   {'ok' if good else 'FAIL'}")
     ok &= good
@@ -361,7 +376,7 @@ def check_button_breath():
 
 
 def check_volume():
-    print("\n9. Volume on the left/right tilt - a straight 0-127 level")
+    print("\n9. Volume: bipolar, full at the centre detent")
     ok = True
     d = Dispatch()
     good = d.s.volume == 32767 and d.s.volume_from_midi == 0
@@ -369,21 +384,27 @@ def check_volume():
           f"{'ok' if good else 'FAIL'}")
     ok &= good
 
-    d.cc(CC_VOL_LEFT, 127)
-    hi = d.s.volume
-    d.cc(CC_VOL_LEFT, 0)
-    lo = d.s.volume
-    good = hi > 30000 and lo < 1000
-    print(f"   CC 44: 127 -> {hi:5d}, 0 -> {lo:5d}   "
-          f"{'ok' if good else 'FAIL'}")
+    d.cc(CC_VOLUME, 64)
+    good = d.s.volume == 32767
+    print(f"   CC 42 = 64 (level) -> {d.s.volume:5d}   "
+          f"{'ok - full' if good else '<-- NOT FULL AT CENTRE'}")
     ok &= good
 
-    # The complementary partner must not fight it.
+    for v in (0, 127):
+        dd = Dispatch()
+        dd.cc(CC_VOLUME, v)
+        good = dd.s.volume < 1200
+        if not good:
+            ok = False
+        print(f"   CC 42 = {v:3d} (extreme) -> {dd.s.volume:5d}   "
+              f"{'ok - silent' if good else '<-- NOT SILENT'}")
+
+    # The partner must not fight it.
     d2 = Dispatch()
-    d2.cc(CC_VOL_LEFT, 127)
-    d2.cc(CC_VOL_RIGHT, 0)
-    good = d2.s.volume > 30000
-    print(f"   CC 45 partner leaves it alone: {d2.s.volume:5d}   "
+    d2.cc(CC_VOLUME, 64)
+    d2.cc(CC_VOLUME_PARTNER, 0)
+    good = d2.s.volume == 32767
+    print(f"   CC 43 partner leaves it alone: {d2.s.volume:5d}   "
           f"{'ok' if good else '<-- PARTNER FOUGHT'}")
     ok &= good
     return ok
@@ -532,7 +553,7 @@ def check_channel_agnostic():
 
 def main():
     print("TRACT8 8mu MIDI check: faders 34 openness, 41 front, 36 breath,")
-    print("  37 pitch, 38 bright; tilt 42/43 round, 44/45 volume, 49 mute")
+    print("  37 pitch, 38 bright; tilt 42 volume, 44 round, 49 mute")
     ok = check_faders()
     ok &= check_notes()
     ok &= check_running_status()

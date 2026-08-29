@@ -55,8 +55,8 @@ mapping, so a device straight out of the box drives it.
 | Fader 4 | CC 37 | Pitch — F0, 50–500 Hz |
 | Fader 5 | CC 38 | Brightness — spectral tilt |
 | Faders 2, 6, 7 | — | unused, on purpose |
-| Tilt front / back | CC 42 | **Rounding** — the third vowel axis (the OO dimension) |
-| Tilt left / right | CC 44 | **Volume** |
+| Tilt front / back | CC 42 | **Volume** — level is full, either extreme silent |
+| Tilt left / right | CC 44 | **Rounding** — level is unrounded, either extreme toward OO |
 | **Turned over** | CC 49 | **Mute** — CC 49 reads high when upright |
 | Button 1 | Note 36 (C2) | Gate the voiced buzz, **+ breath while held** |
 | Button 2 | Note 48 (C3) | Gate the unvoiced noise |
@@ -101,11 +101,20 @@ reads **high while the device is upright**, so the mute triggers on a low
 value. The card was shipped once with this backwards — muted during normal
 use, audible only when turned over.
 
-**The tilt controls are continuous levels.** Each accelerometer axis sweeps
-0–127 as the device tilts, and the two halves of a pair add up to 127 — so
-the card reads one of each pair (CC 42 for rounding, CC 44 for volume) and
-ignores its partner. A level 8mu sits around the middle of each, so volume
-rests near half and tilting either way takes it to the extremes.
+**Both tilt axes have a centre detent.** Each accelerometer axis is reported
+as a pair of controllers that add to 127, so a level 8mu sits at 64 on each
+— and 64 is the neutral position. What matters is how far you tilt, not
+which way: either direction does the same thing.
+
+- **Volume** is full with the controller level and fades to silence at
+  either extreme.
+- **Rounding** is unrounded when level and moves toward OO at either
+  extreme.
+
+The response is **squared, so it favours ON**. A quarter tilt is only 0.6 dB
+down where a linear curve would be 2.5 dB — an imperfectly level controller
+never quietly robs you of level — while a full tilt still reaches −30 dB,
+which is silence.
 
 **Buttons 1 and 4 add breath while held**, on top of wherever fader 3 is
 parked — a voiced sound with a whisper of noise under it reads as breathy

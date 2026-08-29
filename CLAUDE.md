@@ -11,7 +11,9 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
-## Current status: v1.4.1, accelerometer semantics fixed
+## Current status: v1.5.0, bipolar tilt axes
+
+## Previously: v1.4.1, accelerometer semantics fixed
 
 ## Previously: v1.4.0, the vowel cube
 
@@ -378,7 +380,46 @@ loudly. WorkshopSpectral modelled 51% and measured 231% on real silicon. **CV
 Out 2 is the authority on this card's cost.** Once TRACT8 has run on hardware,
 replace the prediction with the reading.
 
-## The accelerometer is GESTURE MAGNITUDES, not bipolar axes (v1.4.1)
+## The tilt axes are bipolar with a centre detent (v1.5.0)
+
+The accelerometer pairs add to 127, so a level 8mu sits at **64** on each
+axis. That makes 64 the natural neutral point, and both tilt controls are
+now bipolar around it:
+
+| Axis | CC | Centre (64) | Either extreme |
+|---|---|---|---|
+| Front/back | 42 | full volume | silence |
+| Left/right | 44 | unrounded | toward OO |
+
+**Direction does not matter, only distance.** That is what makes them
+playable - nothing to remember about which way is which.
+
+**The response is squared, to favour the neutral state.** For volume this
+is the whole point: a quarter tilt is 0.6 dB down where a linear curve
+would be 2.5 dB, so a controller held imperfectly level does not quietly
+rob level, while a full tilt still reaches -30 dB. A cubed curve was tried
+and clings to full volume too long to read as a fade at all.
+
+### The five attempts this took
+
+Worth listing, because every one failed by inventing semantics instead of
+asking what the device sends:
+
+1. `32767 - lift_back + lift_front` - assumed lift_back rests at zero.
+2. Running-minimum "rest" plus `abs()` deviation - solved a non-problem,
+   and folded the axis so half the travel mirrored the other.
+3. Straight 0-127 levels - a level controller sat at half volume.
+4. Mute read as high-means-inverted - muted during normal use.
+5. This one: bipolar around 64, which is what the pairing implies.
+
+Three of those produced a control that appeared **absent** rather than
+**wrong**, which is the hardest kind to diagnose from the bench. Counting
+the silent filter bank and the dead knob, that pattern has now hit this
+card four times, and every time a clamp or a fold was hiding a bad
+assumption underneath. **When a control seems to do nothing at all, suspect
+the mapping before the wiring.**
+
+## Previously: the accelerometer is not gesture magnitudes (v1.4.1)
 
 Two hardware reports, one root cause: *"Tilt isn't doing volume now!? And
 upside down should be MUTE."* Both were the same wrong assumption.

@@ -36,44 +36,44 @@ static inline int32_t CcToQ15(uint8_t v) { return (int32_t)v << 8; }
 // first message on each axis establishes that axis's rest point; from then
 // on only the DEVIATION from rest is used. That works whatever the 8mu
 // happens to send when level, and it needs no configuration.
-// The accelerometer axes are CONTINUOUS LEVELS, 0-127, not gesture events
-// and not magnitudes needing calibration.
+// The accelerometer axes are CONTINUOUS LEVELS, 0-127, reported as
+// complementary pairs that add to 127. A level device therefore sits at 64
+// on each axis, and 64 is the neutral point of a bipolar control.
 //
-// This took three attempts to get right, so it is worth stating plainly:
-// tilting the 8mu sweeps a controller through its full 0-127 range, and
-// turning it over parks the inverted controller near 127. There is no
-// resting offset to learn and no gesture to detect - the value IS the
-// position.
+// Both axes are BIPOLAR WITH A CENTRE DETENT: the effect is the DEVIATION
+// from centre, in either direction, not the raw level. Tilting one way or
+// the other does the same thing, which is what makes them playable - you
+// do not have to remember which way is which, only how far.
 //
-// The two previous versions both failed on hardware by assuming otherwise.
-// The first computed 32767 - lift_back + lift_front, which silences the
-// card whenever lift_back rests above zero. The second tracked a running
-// minimum and used the deviation from it, which was a solution to a
-// problem that does not exist, and folded the sign with abs() so half the
-// travel mirrored the other half instead of continuing.
-//
-// Both of those are the same underlying mistake - inventing semantics
-// rather than reading a level - and both produced a control that appeared
-// dead rather than wrong, which is far harder to diagnose from the bench.
+// The response is SQUARED, which biases the control toward its neutral
+// state. That is deliberate for volume in particular: the card should stay
+// audible through most of the travel and only fall away near the ends, so
+// that an imperfectly level controller does not quietly rob level. At a
+// quarter tilt a squared curve is 0.6 dB down where a linear one is 2.5 dB
+// down; at the extreme both reach silence. A cubed curve was tried and
+// clings to full volume too long to read as a fade at all.
 
-// Volume: the left/right tilt, straight through. Full scale is unity so a
-// controller sitting level is at full volume; tilting to the other end of
-// the axis fades to silence.
-static void UpdateVolume(int32_t level_q15) {
-  int32_t vol = level_q15;
-  if (vol < 0) vol = 0;
-  if (vol > 32767) vol = 32767;
-  g_state.volume = vol;
+// Deviation from the centre detent, squared, Q15. Returns 0 at centre and
+// 32767 at either extreme of the axis.
+static int32_t TiltDeviation(uint8_t v) {
+  int32_t d = (int32_t)v - kTiltCentre;
+  if (d < 0) d = -d;
+  if (d > kTiltCentre) d = kTiltCentre;      // v = 0 gives exactly 64
+  // (d/64)^2 in Q15, computed as (d*d << 15) / (64*64) without overflow:
+  // d*d is at most 4096, so the shift is safe in int32.
+  return (d * d * 32767) / (kTiltCentre * kTiltCentre);
+}
+
+// Volume: full at the centre detent, falling to silence at either extreme.
+static void UpdateVolume(uint8_t v) {
+  g_state.volume = 32767 - TiltDeviation(v);
   g_state.volume_from_midi = 1;
 }
 
-// Rounding: the front/back tilt, straight through. 0 is spread and full
-// scale is fully rounded, which is the OO end of the vowel cube.
-static void UpdateRound(int32_t level_q15) {
-  int32_t r = level_q15;
-  if (r < 0) r = 0;
-  if (r > 32767) r = 32767;
-  g_state.round = r;
+// Rounding, the vowel cube third axis: unrounded at the centre detent,
+// moving toward the OO end of the cube at either extreme.
+static void UpdateRound(uint8_t v) {
+  g_state.round = TiltDeviation(v);
   g_state.round_from_midi = 1;
 }
 
@@ -142,23 +142,16 @@ static void HandleCc(uint8_t cc, uint8_t v) {
       // racing for one value. Left unread on purpose.
       return;
 
-    case kCcRoundFront:
-      // Front/back tilt is ROUNDING - the vowel cube third axis, and the
-      // OO dimension.
-      //
-      // ONE CONTROLLER PER AXIS. CC 43 (lift back) is deliberately not
-      // read: the pair is COMPLEMENTARY, front and back adding to 127, so
-      // CC 43 carries no information CC 42 does not already have.
-      // Reading both would mean two writers for one value with the last
-      // message winning, which is a race for no benefit.
-      if (g_state.freeze) return;
-      UpdateRound(CcToQ15(v));
+    case kCcVolume:
+      // Front/back tilt is VOLUME. Level is full, either extreme silent.
+      UpdateVolume(v);
       return;
 
-    case kCcVolLeft:
-      // Left/right tilt is VOLUME. CC 45 likewise not read: left and
-      // right also add to 127, so one of them is the whole axis.
-      UpdateVolume(CcToQ15(v));
+    case kCcRound:
+      // Left/right tilt is ROUNDING - the vowel cube third axis. Level is
+      // unrounded, either extreme moves toward OO.
+      if (g_state.freeze) return;
+      UpdateRound(v);
       return;
 
     default:
