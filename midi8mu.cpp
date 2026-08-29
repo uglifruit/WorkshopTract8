@@ -112,30 +112,34 @@ static void HandleCc(uint8_t cc, uint8_t v) {
       return;
 
     case kCcInverted:
-      // Upside down mutes. The VALUE decides, not the mere arrival of the
-      // message.
+      // CC 49 is HIGH while the device is the RIGHT WAY UP, and falls when
+      // it is turned over. The name is misleading - despite being listed
+      // as "inverted" it reads as an upright indicator on the hardware -
+      // so the sense here is deliberately the opposite of what the label
+      // suggests. Do not "fix" this to match the documentation.
       //
-      // Third attempt at this, so the reasoning is worth writing down.
-      // Reading CC 49 as a bare event ("if it arrives, mute") did not
-      // work on hardware, and the most likely reason is that the 8mu
-      // streams BOTH halves of the pair continuously: CC 49 arrives and
-      // mutes, CC 48 arrives and unmutes, over and over, so the mute
-      // never sticks. It would also break if CC 49 carries a level that
-      // sits low while the device is upright, because any CC 49 at all
-      // would have latched the mute on.
+      // Fourth attempt at this control, and the previous three are worth
+      // recording because each failed differently:
       //
-      // Using the value handles every one of those: a high CC 49 means
-      // inverted, a low one means it is not. If the 8mu really does send
-      // the pair as one-shot events, a flip still sends CC 49 at full
-      // scale, so this keeps working.
-      g_state.muted = (v >= 64) ? 1 : 0;
+      //   1. Treated as a one-shot event: "if CC 49 arrives, mute". These
+      //      are continuous levels, so it fired constantly.
+      //   2. Treated as a level meaning inverted: "v >= 64 mutes". Since
+      //      the level is high when UPRIGHT, this muted the card during
+      //      normal use and unmuted it only when turned over - exactly
+      //      backwards, which is what was reported.
+      //   3. Paired with CC 48 as mutual exclusives, which cannot help
+      //      when the polarity of the reading itself is wrong.
+      //
+      // So: LOW means turned over, which mutes. The threshold sits at 64
+      // with the hysteresis the device already applies.
+      g_state.muted = (v < 64) ? 1 : 0;
       return;
 
     case kCcNotInverted:
-      // Explicitly right way up. Only a HIGH value clears the mute, for
-      // the same reason: if this one streams continuously at a low value
-      // it must not fight the CC 49 above.
-      if (v >= 64) g_state.muted = 0;
+      // The complementary partner. CC 48 and CC 49 add to 127 like the
+      // other accelerometer pairs, so this carries no information CC 49
+      // does not already have, and reading both would mean two writers
+      // racing for one value. Left unread on purpose.
       return;
 
     case kCcRoundFront:

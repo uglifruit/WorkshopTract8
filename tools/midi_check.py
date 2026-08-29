@@ -31,7 +31,7 @@ Checks:
   8. Channel is ignored (all 16 behave alike).
   9. Volume on the front/back accelerometer axis.
  11. Rounding on the left/right axis - the vowel cube third dimension.
- 12. Upside down mutes; right way up releases it (a gesture pair).
+ 12. Mute polarity: CC 49 is HIGH when upright, LOW when turned over.
  13. Buttons A and D add breath while held.
  10. A sustained MIDI flood does not stall the parser (lockup regression).
 
@@ -120,13 +120,10 @@ class Dispatch:
             self.s.bright_from_midi = 1
             return
         if cc == CC_INVERTED:
-            # The VALUE decides - see midi8mu.cpp for why.
-            self.s.muted = 1 if v >= 64 else 0
+            # LOW means turned over - CC 49 reads high when upright.
+            self.s.muted = 1 if v < 64 else 0
             return
-        if cc == CC_NOT_INVERTED:
-            if v >= 64:
-                self.s.muted = 0
-            return
+        # CC 48 is the complementary partner and is not read.
         # Continuous levels, straight through. The complementary partners
         # (CC 43, CC 45) are deliberately not read - see midi8mu.cpp.
         if cc == CC_VOL_LEFT:
@@ -296,30 +293,30 @@ def check_round():
 
 
 def check_mute():
-    print("\n12. Upside down mutes; right way up releases it")
+    print("\n12. Mute: CC 49 is HIGH when upright, LOW when turned over")
     ok = True
     d = Dispatch()
     good = d.s.muted == 0
-    print(f"   not muted at rest   {'ok' if good else 'FAIL'}")
+    print(f"   not muted before any message   {'ok' if good else 'FAIL'}")
     ok &= good
 
-    d.cc(CC_INVERTED, 127)
-    good = d.s.muted == 1
-    print(f"   CC 49 -> muted   {'ok' if good else 'FAIL'}")
-    ok &= good
-
-    # CC 49 simply stops being sent when the controller is righted; only
-    # CC 48 releases the mute. Treating CC 49 as a level latched it on.
-    d.cc(CC_NOT_INVERTED, 127)
+    d.cc(CC_INVERTED, 120)
     good = d.s.muted == 0
-    print(f"   CC 48 -> unmuted   {'ok' if good else 'FAIL'}")
+    print(f"   CC 49 = 120 (upright)      -> NOT muted   "
+          f"{'ok' if good else '<-- BACKWARDS'}")
     ok &= good
 
-    # Interleaved pair: the failure that reached hardware.
+    d.cc(CC_INVERTED, 5)
+    good = d.s.muted == 1
+    print(f"   CC 49 = 5   (turned over)  -> muted       "
+          f"{'ok' if good else 'FAIL'}")
+    ok &= good
+
+    # Streaming both halves must not flicker the mute.
     d3 = Dispatch()
     for _ in range(20):
-        d3.cc(CC_INVERTED, 127)
-        d3.cc(CC_NOT_INVERTED, 0)
+        d3.cc(CC_INVERTED, 5)
+        d3.cc(CC_NOT_INVERTED, 122)
     good = d3.s.muted == 1
     print(f"   holds muted through interleaved pairs   "
           f"{'ok' if good else '<-- FLICKERS'}")

@@ -57,7 +57,7 @@ mapping, so a device straight out of the box drives it.
 | Faders 2, 6, 7 | — | unused, on purpose |
 | Tilt front / back | CC 42 | **Rounding** — the third vowel axis (the OO dimension) |
 | Tilt left / right | CC 44 | **Volume** |
-| **Upside down** | CC 49 / 48 | **Mute** — turn over to mute, back to unmute |
+| **Turned over** | CC 49 | **Mute** — CC 49 reads high when upright |
 | Button 1 | Note 36 (C2) | Gate the voiced buzz, **+ breath while held** |
 | Button 2 | Note 48 (C3) | Gate the unvoiced noise |
 | Button 3 | Note 60 (C4) | Plosive burst |
@@ -92,10 +92,14 @@ outside the reachable space — it is rounder than anything on the OO–AH edge,
 its F2 (840 Hz) below both back corners. Tilt the controller and it appears.
 AW and ER come with it.
 
-**Upside down mutes.** Turning the controller over is unmistakable and
-nobody does it by accident, which is exactly what a panic stop should be.
-Turn it back over to unmute. LED 5 goes dark while muted, so the panel says
-why it is silent.
+**Turning the controller over mutes.** It is an unmistakable gesture that
+nobody makes by accident, which is what a panic stop should be. LED 5 goes
+dark while muted, so the panel says why it is silent.
+
+Note the polarity: CC 49 is labelled "inverted" in the 8mu documentation but
+reads **high while the device is upright**, so the mute triggers on a low
+value. The card was shipped once with this backwards — muted during normal
+use, audible only when turned over.
 
 **The tilt controls are continuous levels.** Each accelerometer axis sweeps
 0–127 as the device tilts, and the two halves of a pair add up to 127 — so

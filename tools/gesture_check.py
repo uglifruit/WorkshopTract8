@@ -7,8 +7,8 @@ That is the lesson worth keeping. The CCs are:
   - CONTINUOUS LEVELS, 0-127, sweeping as the device tilts;
   - COMPLEMENTARY IN PAIRS - lift left and lift right add to 127, and so
     do lift front and lift back;
-  - and "inverted" (CC 49) sits near 127 while the device is upside down,
-    hysteresis notwithstanding.
+  - and CC 49, despite its "inverted" label, sits HIGH while the device is
+    the right way up and falls when it is turned over.
 
 There is no gesture to detect, no resting offset to learn, no calibration
 to do. The value IS the position.
@@ -34,7 +34,7 @@ Checks:
   2. Before any tilt message the card is at FULL volume, not quiet.
   3. Rounding sweeps spread to rounded across its own 0-127.
   4. The complementary partner is ignored, so the pair cannot fight.
-  5. Mute follows the VALUE of CC 49 and survives continuous streaming.
+  5. Mute polarity: CC 49 is HIGH when upright, LOW when turned over.
 
 Run: python tools/gesture_check.py
 """
@@ -67,10 +67,9 @@ class Firmware:
             if not self.freeze:
                 self.round = max(0, min(32767, q15))
         elif cc == CC_INVERTED:
-            self.muted = 1 if v >= 64 else 0
-        elif cc == CC_NOT_INVERTED:
-            if v >= 64:
-                self.muted = 0
+            # LOW means turned over. See midi8mu.cpp.
+            self.muted = 1 if v < 64 else 0
+        # CC 48 is the complementary partner and is not read.
         # CC 43 and CC 45 are complementary partners and are not read.
 
 
@@ -164,30 +163,43 @@ def check_partner_ignored():
 
 
 def check_mute():
-    print("\n5. Mute follows the VALUE of CC 49")
+    """Polarity is the whole point. CC 49 is HIGH when UPRIGHT."""
+    print("\n5. Mute: CC 49 reads high when upright, low when turned over")
     ok = True
+
+    # Upright is the normal case and must NOT be muted. Getting this
+    # backwards muted the card during ordinary use and unmuted it only when
+    # the controller was turned over - which is exactly what was reported.
+    for v in (127, 120, 100, 80, 64):
+        f = Firmware()
+        f.cc(CC_INVERTED, v)
+        if f.muted != 0:
+            ok = False
+    print(f"   CC 49 high (64-127, upright)   -> NOT muted   "
+          f"{'ok' if ok else '<-- BACKWARDS'}")
+
+    inv_ok = True
+    for v in (0, 5, 20, 40, 63):
+        f = Firmware()
+        f.cc(CC_INVERTED, v)
+        if f.muted != 1:
+            inv_ok = False
+    print(f"   CC 49 low  (0-63, turned over) -> muted       "
+          f"{'ok' if inv_ok else '<-- FAIL'}")
+    ok &= inv_ok
+
+    # Before any message at all, the card must be audible: an 8mu that is
+    # never turned over must never mute the card.
     f = Firmware()
     good = f.muted == 0
     print(f"   unmuted before any message   {'ok' if good else 'FAIL'}")
     ok &= good
 
-    f.cc(CC_INVERTED, 120)
-    good = f.muted == 1
-    print(f"   CC 49 = 120 (upside down) -> muted   "
-          f"{'ok' if good else 'FAIL'}")
-    ok &= good
-
-    f.cc(CC_INVERTED, 5)
-    good = f.muted == 0
-    print(f"   CC 49 = 5 (right way up)  -> unmuted   "
-          f"{'ok' if good else 'FAIL'}")
-    ok &= good
-
-    # Continuous streaming of both halves must not make the mute flicker.
+    # Continuous streaming must not flicker the mute either way.
     f2 = Firmware()
     for _ in range(20):
-        f2.cc(CC_INVERTED, 125)
-        f2.cc(CC_NOT_INVERTED, 2)
+        f2.cc(CC_INVERTED, 5)
+        f2.cc(CC_NOT_INVERTED, 122)   # partner, must be ignored
     good = f2.muted == 1
     print(f"   holds muted while both stream   "
           f"{'ok' if good else '<-- FLICKERS'}")
@@ -195,20 +207,21 @@ def check_mute():
 
     f3 = Firmware()
     for _ in range(20):
-        f3.cc(CC_INVERTED, 2)
-        f3.cc(CC_NOT_INVERTED, 125)
+        f3.cc(CC_INVERTED, 122)
+        f3.cc(CC_NOT_INVERTED, 5)
     good = f3.muted == 0
     print(f"   holds unmuted while both stream   "
           f"{'ok' if good else 'FAIL'}")
     ok &= good
 
-    # Hysteresis: the value need not reach exactly 127.
-    for v in (64, 80, 100, 120, 127):
-        f4 = Firmware()
-        f4.cc(CC_INVERTED, v)
-        if f4.muted != 1:
-            ok = False
-    print("   any value >= 64 mutes (hysteresis tolerated)   ok")
+    # The partner alone must do nothing.
+    f4 = Firmware()
+    f4.cc(CC_NOT_INVERTED, 127)
+    good = f4.muted == 0
+    f4.cc(CC_NOT_INVERTED, 0)
+    good = good and f4.muted == 0
+    print(f"   CC 48 alone changes nothing   {'ok' if good else 'FAIL'}")
+    ok &= good
     return ok
 
 

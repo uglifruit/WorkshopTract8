@@ -30,8 +30,7 @@
 // any of them. Nothing here may assume a resting value: the volume and
 // round axes calibrate themselves from the first message they see. Two
 // hardware rounds were lost to assuming otherwise - see midi8mu.cpp.
-//   CC 48/49         MUTE       49 mutes, 48 unmutes (a gesture PAIR,
-//                               not a level - see midi8mu.cpp)
+//   CC 49            MUTE       LOW value = turned over = muted
 //   CC 46, 47        unassigned
 //   Note 36 (C2)     voiced buzz gate, and adds breath
 //   Note 48 (C3)     unvoiced noise gate
@@ -78,8 +77,13 @@ static constexpr uint8_t kCcRoundFront = 42;  // tilt front
 static constexpr uint8_t kCcRoundBack = 43;   // tilt back
 static constexpr uint8_t kCcVolLeft = 44;     // tilt left
 static constexpr uint8_t kCcVolRight = 45;    // tilt right
-static constexpr uint8_t kCcNotInverted = 48;  // right way up - unmute
-static constexpr uint8_t kCcInverted = 49;     // upside down - mute
+// CC 49 reads HIGH while the device is the RIGHT WAY UP and falls when it
+// is turned over, despite being labelled "inverted" in the 8mu docs. The
+// mute therefore triggers on a LOW value. CC 48 is its complementary
+// partner and is not read. See midi8mu.cpp for the three failed attempts
+// that established this.
+static constexpr uint8_t kCcNotInverted = 48;  // partner, unread
+static constexpr uint8_t kCcInverted = 49;     // low = turned over = mute
 
 // Button notes.
 static constexpr uint8_t kNoteVoiced = 36;   // C2
