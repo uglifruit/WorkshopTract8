@@ -130,7 +130,7 @@ under your hand.
 
 | Jack | Function |
 |---|---|
-| Audio In 1 | **Breath CV** — buzz ↔ noise, adds to the control |
+| Audio In 1 | **External exciter** — summed with the internal buzz and noise |
 | Audio In 2 | **Volume CV** — swells and ducks around the base level |
 | CV In 1 | **Pitch**, 1V/oct |
 | CV In 2 | **Formant CV**, bipolar — sweeps the vowel cube diagonally |
@@ -165,9 +165,14 @@ stutters it.
 A good first patch for this: slow random into CV In 2, a clock divided a few
 ways into both pulse inputs, and an envelope into Audio In 2.
 
-**Note:** Audio In 1 no longer replaces the internal excitation — it is the
-breath CV now. One jack cannot do both, since a breath voltage would have
-silenced the buzz the moment it went positive.
+**Audio In 1 sums, it does not replace.** Patch a drum loop or a bassline in
+and it goes through the same eight bands the card is speaking with — so you
+can talk over it, rather than the internal voice disappearing while a cable
+is in. It comes in level with the internal sources, so whatever you patch can
+carry the sound; set the balance at the source.
+
+Breath has no CV input, because it has three physical routes already
+(fader 3, Knob 3, and buttons 1 and 4) while external audio had none.
 
 ### LEDs
 

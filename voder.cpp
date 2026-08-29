@@ -240,11 +240,27 @@ int32_t __not_in_flash_func(Voder::Process)(const Params& p) {
   int32_t excite = (int32_t)((((int64_t)buzz_amt * mix) +
                               ((int64_t)hiss_amt * p.source_mix)) >> 15);
 
-  // External input replaces the internal sources entirely when Audio In 1
-  // is patched - the Voder as a formant filter for whatever you feed it.
-  if (p.use_ext) {
-    excite = p.ext_input << 3;  // 12-bit ADC to Q15-ish
-  }
+  // Audio In 1 is SUMMED into the excitation, not substituted for it.
+  //
+  // Replacing was tried first and is the worse instrument. It turns the
+  // card into a formant filter and nothing else while a cable is in - the
+  // internal voice disappears, so you cannot talk over the drum loop you
+  // are filtering, which is the obvious thing to want. Summing keeps both:
+  // the external signal and the buzz go through the same eight bands, so
+  // whatever vowel the hands are making is imposed on both at once.
+  //
+  // Summed at unity with the internal sources, not attenuated. Halving it
+  // was tried and put a full-scale input 12 dB below the buzz, which is
+  // too quiet for external audio to be the main event - and being the main
+  // event is the point of patching something in. Level is set by whatever
+  // is plugged in, which is where a modular player expects it.
+  //
+  // The worst case - all eight bands wide open, coherent input - would
+  // clip, but a real vowel uses about a fifth of that summed gain and
+  // leaves plenty of headroom. main.cpp clamps either way, so the failure
+  // mode is audible clipping rather than integer wrap; chain_check.py
+  // guards the wrap.
+  excite += p.ext_input;
 
   // Headroom before the filter bank. Each band can contribute up to its
   // full gain, and eight bands summing at once would overflow; scaling the

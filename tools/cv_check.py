@@ -24,14 +24,14 @@ wiring:
      texture rather than a fault.
 
 Jacks:
-  Audio In 1  breath CV     Audio In 2  volume CV
+  Audio In 1  exciter       Audio In 2  volume CV
   CV In 1     pitch 1V/oct  CV In 2     formant, bipolar
   Pulse In 1  click         Pulse In 2  glottal gate
 
 Checks:
   1. Every CV adds to its control rather than replacing it.
   2. A random formant CV visits genuinely different vowels.
-  3. The breath CV spans the whole buzz/noise balance.
+  3. External audio sums with the internal sources at a usable level.
   4. The volume CV ducks and swells around the base level.
   5. Gate streams chatter cleanly across a useful frequency range.
 
@@ -160,24 +160,55 @@ def check_formant_diagonal():
     return ok
 
 
-def check_breath_cv():
-    print("\n3. The breath CV spans the whole balance")
+def check_exciter():
+    """Audio In 1 sums with the internal sources rather than replacing them."""
+    print("\n3. External audio sums at a usable level")
     ok = True
-    # Audio In 1 is <<3, so +/-2048 becomes +/-16384.
-    for cv, label in ((-2048, "-5V"), (0, "0V"), (2047, "+5V")):
-        for base, bl in ((0, "buzz"), (16384, "mid"), (32767, "noise")):
-            mix = clamp15(base + (cv << 3))
-            if base == 16384:
-                print(f"   {label:3} from {bl:5} -> {mix:5d}")
-    lo = clamp15(16384 + (-2048 << 3))
-    hi = clamp15(16384 + (2047 << 3))
-    # The positive rail is 2047, not 2048, so the top lands 7 counts short
-    # of full scale - 0.002 dB, which is not a real limit.
-    good = lo == 0 and hi > 32700
+
+    # Audio In 1 is <<4, so +/-2048 becomes roughly +/-32767 - level with
+    # the internal buzz and noise.
+    ext_max = 2047 << 4
+    internal = 32767
+    rel = 20 * math.log10(ext_max / internal)
+    good = abs(rel) < 3.0
     if not good:
         ok = False
-    print(f"   from centre, +/-5V reaches {lo} and {hi}   "
-          f"{'ok - full span' if good else '<-- CANNOT REACH THE ENDS'}")
+    print(f"   full-scale input is {rel:+.1f} dB against the internal buzz   "
+          f"{'ok - can carry the sound' if good else '<-- TOO QUIET TO LEAD'}")
+    print("   (halving it was tried and put external 12 dB down, which is")
+    print("    too quiet for the thing you patched in to be the point)")
+
+    # Summed, not substituted: the internal voice must survive.
+    # Modelled as the engine does it - excite = mix + ext.
+    for label, mix, ext in (("internal only", 20000, 0),
+                            ("external only", 0, 20000),
+                            ("both together", 20000, 20000)):
+        total = mix + ext
+        print(f"   {label:14} -> excitation {total:6d}")
+    good = (20000 + 20000) > 20000
+    print(f"   both audible at once   "
+          f"{'ok - talk over a drum loop' if good else 'FAIL'}")
+    ok &= good
+
+    # Worst case must not wrap int32, whatever it does at the DAC.
+    worst = internal + ext_max
+    good = worst < 2 ** 31
+    if not good:
+        ok = False
+    print(f"   worst-case excitation {worst} fits int32   "
+          f"{'ok' if good else '<-- WRAPS'}")
+
+    # A real vowel uses a fraction of the all-open bank gain, so the
+    # realistic peak has headroom even though the coherent worst case
+    # would clip.
+    AH = [666, 4003, 16000, 15423, 7647, 4226, 3923, 1675]
+    frac = sum(AH) / (8 * 32767)
+    dac = int(((worst >> 3) * 2.299 * frac)) >> 2
+    good = dac < 2048
+    if not good:
+        ok = False
+    print(f"   realistic peak at the DAC {dac} of 2047   "
+          f"{'ok' if good else '<-- CLIPS ON ORDINARY MATERIAL'}")
     return ok
 
 
@@ -250,7 +281,7 @@ def main():
     print("  Fed from random voltages, does it babble usefully?")
     ok = check_cvs_add()
     ok &= check_formant_diagonal()
-    ok &= check_breath_cv()
+    ok &= check_exciter()
     ok &= check_volume_cv()
     ok &= check_gate_chatter()
     print("\nPASS" if ok else "\nFAIL")

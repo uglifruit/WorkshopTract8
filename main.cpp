@@ -13,7 +13,7 @@
 //   main.cpp      panel, CV, LEDs, core scheduling
 //
 // Jacks:
-//   Audio In 1   breath   CV, adds to the fader
+//   Audio In 1   exciter  external audio, summed with buzz and noise
 //   Audio In 2   volume   CV, adds to the fader
 //   CV In 1      pitch    1V/oct
 //   CV In 2      formant  bipolar, sweeps the vowel cube diagonally
@@ -198,22 +198,13 @@ class VoderCard : public ComputerCard {
     p.f0_milli_hz = f0;
 
     // Breath: fader 3 if the 8mu has sent it, otherwise Knob 3, plus
-    // Audio In 1 as a CV, plus whatever buttons A and D are adding.
+    // whatever buttons A and D are adding while held.
     //
     // The buttons ADD rather than set, so they are a gesture on top of
     // wherever the fader is parked - press one over a voiced sound and it
     // turns breathy without losing the pitch. Both buttons together give
     // twice as much, which is the obvious reading of holding both.
     int32_t breath = g_state.breath_from_midi ? g_state.breath : panel_breath_;
-
-    // Audio In 1 is a breath CV. Bipolar, so a random voltage pushes the
-    // mix either side of where the control is parked: +5 V is fully noisy,
-    // -5 V fully voiced. <<3 takes the +/-2048 input to roughly +/-16384,
-    // half of Q15, which is enough to sweep the whole balance from a
-    // centred control without a full-scale signal.
-    if (Connected(Input::Audio1)) {
-      breath += (int32_t)AudioIn1() << 3;
-    }
 
     if (g_state.breath_button_a) breath += kButtonBreath;
     if (g_state.breath_button_d) breath += kButtonBreath;
@@ -260,20 +251,23 @@ class VoderCard : public ComputerCard {
     p.click_decay =
         g_state.click_decay_from_midi ? g_state.click_decay : 32767;
 
-    // Audio In 1 is the BREATH CV now, not an excitation replacement.
+    // Audio In 1 is an EXTERNAL EXCITER, summed with the internal buzz
+    // and noise inside the engine.
     //
-    // It cannot be both. The old behaviour handed the filter bank whatever
-    // was on the jack whenever the signal exceeded a threshold, so a
-    // breath CV would have silenced the buzz the moment it went positive -
-    // two controls fighting over one jack, with the louder one winning.
+    // It was briefly the breath CV instead, and the two genuinely cannot
+    // share a jack: a slow breath voltage means nothing to a bank of
+    // bandpass filters, which have no DC gain, while an audio signal
+    // summed into the excitation is not a balance control. They are
+    // different functions, not two readings of one.
     //
-    // The external-excitation feature is not lost so much as relocated:
-    // patch a signal into Audio In 1 and it still shapes the sound, just
-    // by driving the buzz/noise balance rather than by replacing the
-    // source. If a true external exciter is wanted again it needs its own
-    // jack, and there is not one free.
-    p.use_ext = false;
-    p.ext_input = 0;
+    // The jack goes to the exciter because breath is the most reachable
+    // control on the card already - fader 3, Knob 3, and buttons A and D
+    // all reach it - while external audio had no route at all. Formant
+    // keeps CV In 2 despite also having faders, knobs and tilt, because
+    // sweeping vowels from a random voltage is the point of the card.
+    // <<4 puts a full-scale input level with the internal sources, so a
+    // patched signal can carry the sound rather than sitting under it.
+    p.ext_input = Connected(Input::Audio1) ? ((int32_t)AudioIn1() << 4) : 0;
 
     // --- plosive triggers -------------------------------------------------
     // Counted, not flagged: fire once per increment Core 1 has made since
@@ -340,7 +334,7 @@ class VoderCard : public ComputerCard {
     // Diagnostic state for the LED display. Kept because the first
     // hardware run was silent and there was no way to see WHY from the
     // panel - every candidate cause looked identical from outside.
-    diag_use_ext_ = p.use_ext;
+    diag_use_ext_ = (p.ext_input != 0);
     diag_gated_ = (p.voiced_level == 0 && p.noise_level == 0);
 
     if (out > 2047) out = 2047;

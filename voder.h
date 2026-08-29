@@ -83,8 +83,10 @@ struct Params {
   int32_t source_mix;         // 0 = all buzz, 32767 = all noise
   int32_t voiced_level;       // buzz gate, 0..32767
   int32_t noise_level;        // hiss gate, 0..32767
-  int32_t ext_input;          // Audio In 1 sample, or 0
-  bool    use_ext;            // true to replace internal excitation
+  // Audio In 1, SUMMED with the internal buzz and noise rather than
+  // replacing them - so an external signal is filtered by the same vowel
+  // the card is speaking, with the internal voice still underneath it.
+  int32_t ext_input;
 
   // Plosive level, Q15. Scales the burst so it can be balanced against
   // the voice - it was too loud fixed at full.
