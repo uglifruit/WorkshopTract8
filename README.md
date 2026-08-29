@@ -227,6 +227,18 @@ CV Out 2 outputs measured microseconds per sample against the 20.83 µs budget,
 0 V to about 5 V for 0–100%. This is a measurement, not an estimate. If it
 reads above about 4 V the card is close to dropping samples.
 
+## Breath is a ratio, not a level
+
+Breath changes how *breathy* the voice is, not how loud — sweep it from end
+to end and the level stays put while the character moves from a clear hum to
+a whisper. It behaves the same whether both source buttons are gating, one
+is, or neither: the gates decide the envelope and breath decides what is
+inside it.
+
+That makes it duck and swell with everything else. Pull the volume down with
+the tilt or fader 7 and the breathy component comes down with it, in
+proportion — which is what a voice does.
+
 ## What formant freeze actually does
 
 It latches the eight band gains where they are. Faders and Knob 1 stop having

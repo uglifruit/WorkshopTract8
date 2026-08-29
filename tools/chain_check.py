@@ -24,6 +24,8 @@ Checks:
   2. Full chain level for a buzz at F0 through a real vowel, in DAC counts.
   3. The same for noise.
   4. Headroom: worst case must not overflow int32 or clip the DAC.
+  5. The click sits under the voice, measured against the VOICE.
+  6. Breath changes the character of the sound, not its level.
 
 Run: python tools/chain_check.py
 """
@@ -192,6 +194,92 @@ def check_headroom():
     return ok
 
 
+
+
+# Click gain staging, transcribed from voder.cpp.
+CLICK_SHIFT = 19
+DEFAULT_CLICK_LEVEL = 6500      # main.cpp, no 8mu attached
+VOWEL_BAND_FRACTION = sum(VOWEL_AH) / (8 * 32767)
+
+
+def voice_at_sum():
+    """Roughly what a real vowel contributes at the summing point."""
+    return int((32767 >> PRE_SHIFT) * 2.299 * VOWEL_BAND_FRACTION)
+
+
+def click_at_sum(level):
+    return (32768 * level) >> CLICK_SHIFT
+
+
+def check_click_balance():
+    """The click must sit UNDER the voice, and 'under' means against the
+    voice - not against the click's own full scale."""
+    print("\n5. Click level against the voice")
+    ok = True
+    voice = voice_at_sum()
+    print(f"   a real vowel contributes about {voice} at the sum")
+    print("   click level      vs voice")
+    for level, label in ((DEFAULT_CLICK_LEVEL, "default   "),
+                         (16384, "fader half"),
+                         (32767, "fader full")):
+        c = click_at_sum(level)
+        db = 20 * math.log10(max(c, 1) / voice)
+        print(f"   {label}      {db:+6.1f} dB")
+
+    # The default must be clearly under the voice. It was reported as too
+    # percussive twice: the first fix set the level to "-14 dB" but that
+    # was -14 dB of the CLICK's full scale, which landed it 1.5 dB below
+    # the voice - level with it, in other words.
+    d = 20 * math.log10(max(click_at_sum(DEFAULT_CLICK_LEVEL), 1) / voice)
+    good = d < -10.0
+    if not good:
+        ok = False
+    print(f"   default is {d:+.1f} dB under the voice   "
+          f"{'ok - punctuation' if good else '<-- STILL PERCUSSIVE'}")
+
+    # But the fader must still be able to make it loud, or the control is
+    # pointless.
+    full = 20 * math.log10(max(click_at_sum(32767), 1) / voice)
+    good = full > -3.0
+    if not good:
+        ok = False
+    print(f"   fader full reaches {full:+.1f} dB   "
+          f"{'ok - can still be loud' if good else '<-- CANNOT GET LOUD'}")
+    print("   (the click is summed AFTER the bank, so unlike the voice it")
+    print("    is never attenuated by the vowel - which is why it needs")
+    print("    to be set this far down to sit underneath)")
+    return ok
+
+
+def check_breath_is_a_ratio():
+    """Breath must change the character, not the level."""
+    print("\n6. Breath is a ratio, not a level")
+    ok = True
+    print("   breath   both gates   voiced only   noise only")
+    levels = []
+    for bm in (0, 8192, 16384, 24576, 32767):
+        row = f"   {bm:5d}   "
+        for gv, gn in ((1, 1), (1, 0), (0, 1)):
+            mix = 32767 - bm
+            blended = ((32767 * mix) + (32767 * bm)) >> 15
+            env = max(32767 * gv, 32767 * gn)
+            ex = (blended * env) >> 15
+            levels.append(ex)
+            row += f"{ex:9d}    "
+        print(row)
+
+    spread = max(levels) - min(levels)
+    good = spread < 200
+    if not good:
+        ok = False
+    print(f"   level varies by {spread} across every combination   "
+          f"{'ok - constant' if good else '<-- BREATH CHANGES VOLUME'}")
+    print("   (the old code gated buzz and hiss separately and crossfaded")
+    print("    afterwards, so a button gating one source silenced half the")
+    print("    crossfade and 50% breath gave HALF THE VOLUME)")
+    return ok
+
+
 def main():
     print("TRACT8 end-to-end chain check - absolute levels in DAC counts")
     print(f"  pre-bank >>{PRE_SHIFT}, post-bank >>{POST_SHIFT}, "
@@ -201,6 +289,8 @@ def main():
     ok &= check_full_chain()
     ok &= check_noise_chain()
     ok &= check_headroom()
+    ok &= check_click_balance()
+    ok &= check_breath_is_a_ratio()
 
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1

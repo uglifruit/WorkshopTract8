@@ -231,14 +231,29 @@ int32_t __not_in_flash_func(Voder::Process)(const Params& p) {
     noise_env_ -= step; if (noise_env_ < n_target) noise_env_ = n_target;
   }
 
-  // Source mix. The Voder's wrist bar was a hard either/or; a continuous
-  // crossfade is more useful and reduces to the original at the extremes.
-  const int32_t buzz_amt = (int32_t)(((int64_t)buzz * gate_env_) >> 15);
-  const int32_t hiss_amt = (int32_t)(((int64_t)noise * noise_env_) >> 15);
-
+  // Source mix, then ONE envelope over the pair.
+  //
+  // Breath is a RATIO, not a pair of independent levels. The crossfade
+  // decides how much of the excitation is noise, and the gate envelope
+  // then scales the result - so "50% breath" means half-noisy sound at
+  // whatever level the card is playing, rather than half the level.
+  //
+  // The old arrangement gated buzz and hiss separately and crossfaded
+  // afterwards. With both gates open it behaved identically, but a button
+  // gating only one source silenced half the crossfade, so breath at 50%
+  // gave HALF THE VOLUME instead of a half-breathy voice. That is not
+  // what a breath control means, and it is why the control did not feel
+  // like "percentage breathiness".
+  //
+  // Taking the louder of the two gates as the envelope keeps a single
+  // source gate working as a gate: opening only the voiced button still
+  // opens the voice, and the breath knob still decides its character.
   const int32_t mix = 32767 - p.source_mix;
-  int32_t excite = (int32_t)((((int64_t)buzz_amt * mix) +
-                              ((int64_t)hiss_amt * p.source_mix)) >> 15);
+  const int32_t blended = (int32_t)((((int64_t)buzz * mix) +
+                                     ((int64_t)noise * p.source_mix)) >> 15);
+
+  const int32_t env = gate_env_ > noise_env_ ? gate_env_ : noise_env_;
+  int32_t excite = (int32_t)(((int64_t)blended * env) >> 15);
 
   // Audio In 1 is SUMMED into the excitation, not substituted for it.
   //
@@ -322,7 +337,20 @@ int32_t __not_in_flash_func(Voder::Process)(const Params& p) {
     // Scaled by the click level so the burst can be balanced against the
     // voice. It was fixed at full and reported as too loud.
     const int32_t lvl = (int32_t)(((int64_t)env * p.click_level) >> 15);
-    sum += (int32_t)(((int64_t)burst * lvl) >> 17);
+    // >>19, not >>17.
+    //
+    // The click is summed after the filter bank, so it is never attenuated
+    // by the vowel the way the voice is - and the voice arrives here at
+    // roughly a fifth of its nominal level, because a real vowel opens
+    // only a few bands. At >>17 a "-14 dB" click default actually landed
+    // 1.5 dB BELOW the voice, which is to say level with it: the -14 dB
+    // was relative to the click's own full scale rather than to anything
+    // audible. Reported twice as still far too percussive, correctly.
+    //
+    // >>19 puts the default 13.5 dB under the voice, which is punctuation,
+    // while fader 6 at full still reaches parity for when a loud click is
+    // wanted. Measured in tools/chain_check.py.
+    sum += (int32_t)(((int64_t)burst * lvl) >> 19);
 
     if (!plosive_hold_) plosive_--;
   }
