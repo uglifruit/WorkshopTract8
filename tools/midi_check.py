@@ -29,9 +29,9 @@ Checks:
   6. Running status is sustained across messages.
   7. Real-time bytes interleaved mid-message do not corrupt it.
   8. Channel is ignored (all 16 behave alike).
-  9. Volume: bipolar front/back, full at the centre detent.
+  9. Volume: fader 7 plus a bipolar front/back lift.
  11. Rounding on the left/right axis - the vowel cube third dimension.
- 12. Mute polarity: CC 49 is HIGH when upright, LOW when turned over.
+ 12. Mute is disabled in this build.
  13. Buttons A and D add breath while held.
  10. A sustained MIDI flood does not stall the parser (lockup regression).
 
@@ -47,11 +47,12 @@ CC_FRONT = 41         # fader 8  - outermost
 CC_BREATH = 36        # fader 3
 CC_PITCH = 37         # fader 4
 CC_BRIGHT = 38        # fader 5
-CC_VOLUME = 42          # tilt front/back, bipolar with a centre detent
-CC_VOLUME_PARTNER = 43  # complementary partner - not read
-CC_ROUND = 44           # tilt left/right, bipolar with a centre detent
-CC_ROUND_PARTNER = 45   # complementary partner - not read
-TILT_CENTRE = 64
+CC_VOLUME = 40        # fader 7 - base volume
+CC_LIFT_FRONT = 42    # lift gestures: 0 when level
+CC_LIFT_BACK = 43
+CC_LIFT_LEFT = 44
+CC_LIFT_RIGHT = 45
+TILT_VOLUME_RANGE = 32767
 CC_NOT_INVERTED = 48  # right way up - unmute
 CC_INVERTED = 49      # upside down - mute
 BUTTON_BREATH = 9000
@@ -94,6 +95,11 @@ class Dispatch:
     def __init__(self):
         self.s = State()
         self.freeze_held = False
+        self.vol_fader = 32767
+        self.front = 0
+        self.back = 0
+        self.left = 0
+        self.right = 0
 
     def cc(self, cc, v):
         """Transcription of HandleCc() in midi8mu.cpp."""
@@ -125,26 +131,44 @@ class Dispatch:
             self.s.muted = 1 if v < 64 else 0
             return
         # CC 48 is the complementary partner and is not read.
-        # Bipolar with a centre detent at 64, squared response. The
-        # complementary partners are deliberately not read - see
-        # midi8mu.cpp and gesture_check.py.
+        # Lift gestures: 0 when level. Each axis is the DIFFERENCE of its
+        # pair. See midi8mu.cpp and gesture_check.py.
         if cc == CC_VOLUME:
-            self.s.volume = 32767 - self._tilt(v)
-            self.s.volume_from_midi = 1
+            self.vol_fader = v << 8
+            self._update_volume()
             return
-        if cc == CC_ROUND:
+        if cc in (CC_LIFT_FRONT, CC_LIFT_BACK):
+            if cc == CC_LIFT_FRONT:
+                self.front = v
+            else:
+                self.back = v
+            self._update_volume()
+            return
+        if cc in (CC_LIFT_LEFT, CC_LIFT_RIGHT):
             if self.s.freeze:
                 return
-            self.s.round = self._tilt(v)
+            if cc == CC_LIFT_LEFT:
+                self.left = v
+            else:
+                self.right = v
+            t = self._tilt_signed(self.left, self.right)
+            self.s.round = abs(t)
             self.s.round_from_midi = 1
             return
 
     @staticmethod
-    def _tilt(v):
-        d = abs(v - TILT_CENTRE)
-        if d > TILT_CENTRE:
-            d = TILT_CENTRE
-        return (d * d * 32767) // (TILT_CENTRE * TILT_CENTRE)
+    def _tilt_signed(a, b):
+        d = a - b
+        mag = abs(d)
+        q = (mag * mag * 32767) // (127 * 127)
+        return -q if d < 0 else q
+
+    def _update_volume(self):
+        v = self.vol_fader + (
+            (self._tilt_signed(self.front, self.back) * TILT_VOLUME_RANGE)
+            >> 15)
+        self.s.volume = max(0, min(32767, v))
+        self.s.volume_from_midi = 1
 
     def note_on(self, note, vel):
         if vel == 0:
@@ -245,15 +269,24 @@ def check_faders():
     print(f"   vowel axes on faders 1 and 8 (CC 34/41)   "
           f"{'ok' if good else '<-- MOVED, check midi8mu.h'}")
 
-    # Faders 2, 6, 7 are deliberately unassigned.
+    # Faders 2 and 6 are deliberately unassigned. Fader 7 is volume now.
     dd = Dispatch()
     before = vars(dd.s).copy()
-    for cc in (35, 39, 40):
+    for cc in (35, 39):
         dd.cc(cc, 100)
     good = vars(dd.s) == before
     if not good:
         ok = False
-    print(f"   CC 35,39,40 (faders 2,6,7) do nothing   "
+    print(f"   CC 35,39 (faders 2,6) do nothing   "
+          f"{'ok' if good else 'FAIL'}")
+
+    # Fader 7 IS mapped - to volume. Checked properly in check_volume().
+    dd2 = Dispatch()
+    dd2.cc(CC_VOLUME, 64)
+    good = dd2.s.volume_from_midi == 1
+    if not good:
+        ok = False
+    print(f"   CC 40 (fader 7) drives volume   "
           f"{'ok' if good else 'FAIL'}")
 
     # Freeze blocks the vowel axes but not pitch or breath: freezing a
@@ -262,7 +295,7 @@ def check_faders():
     dd.cc(CC_OPENNESS, 100)
     dd.s.freeze = 1
     dd.cc(CC_OPENNESS, 10)
-    dd.cc(CC_ROUND, 100)
+    dd.cc(CC_LIFT_LEFT, 100)
     dd.cc(CC_PITCH, 90)
     good = (dd.s.openness == 100 << 8 and dd.s.round == 0
             and dd.s.pitch == 90 << 8)
@@ -274,33 +307,34 @@ def check_faders():
 
 
 def check_round():
-    print("\n11. Rounding: bipolar, unrounded at the centre detent")
+    print("\n11. Rounding: bipolar left/right lift, unrounded when level")
     ok = True
     d = Dispatch()
     good = d.s.round == 0 and d.s.round_from_midi == 0
-    print(f"   unrounded before any tilt   {'ok' if good else 'FAIL'}")
+    print(f"   unrounded before any message   {'ok' if good else 'FAIL'}")
     ok &= good
 
-    d.cc(CC_ROUND, 64)
+    d.cc(CC_LIFT_LEFT, 0)
+    d.cc(CC_LIFT_RIGHT, 0)
     good = d.s.round < 200
-    print(f"   CC 44 = 64 (level) -> round {d.s.round:5d}   "
+    print(f"   device level -> round {d.s.round:5d}   "
           f"{'ok' if good else '<-- ROUNDED AT REST'}")
     ok &= good
 
-    for v in (0, 127):
+    for cc, name in ((CC_LIFT_LEFT, "left "), (CC_LIFT_RIGHT, "right")):
         dd = Dispatch()
-        dd.cc(CC_ROUND, v)
-        good = dd.s.round > 30000
+        dd.cc(cc, 127)
+        good = dd.s.round > 32000
         if not good:
             ok = False
-        print(f"   CC 44 = {v:3d} (extreme) -> round {dd.s.round:5d}   "
-              f"{'ok - toward OO' if good else '<-- FAIL'}")
+        print(f"   {name} lifted -> round {dd.s.round:5d}   "
+              f"{'ok - toward OO' if good else 'FAIL'}")
 
     d2 = Dispatch()
-    d2.cc(CC_ROUND, 100)
+    d2.cc(CC_LIFT_LEFT, 100)
     before = d2.s.round
     d2.s.freeze = 1
-    d2.cc(CC_ROUND, 64)
+    d2.cc(CC_LIFT_LEFT, 0)
     good = d2.s.round == before
     print(f"   freeze holds rounding   {'ok' if good else 'FAIL'}")
     ok &= good
@@ -308,35 +342,18 @@ def check_round():
 
 
 def check_mute():
-    print("\n12. Mute: CC 49 is HIGH when upright, LOW when turned over")
-    ok = True
+    print("\n12. Mute is DISABLED in this build")
+    # Turned off at the player's request while the tilt behaviour was being
+    # diagnosed. The CC numbers and the polarity note survive in
+    # midi8mu.h; nothing here should react to them.
     d = Dispatch()
+    d.cc(CC_INVERTED, 0)
+    d.cc(CC_INVERTED, 127)
+    d.cc(CC_NOT_INVERTED, 127)
     good = d.s.muted == 0
-    print(f"   not muted before any message   {'ok' if good else 'FAIL'}")
-    ok &= good
-
-    d.cc(CC_INVERTED, 120)
-    good = d.s.muted == 0
-    print(f"   CC 49 = 120 (upright)      -> NOT muted   "
-          f"{'ok' if good else '<-- BACKWARDS'}")
-    ok &= good
-
-    d.cc(CC_INVERTED, 5)
-    good = d.s.muted == 1
-    print(f"   CC 49 = 5   (turned over)  -> muted       "
-          f"{'ok' if good else 'FAIL'}")
-    ok &= good
-
-    # Streaming both halves must not flicker the mute.
-    d3 = Dispatch()
-    for _ in range(20):
-        d3.cc(CC_INVERTED, 5)
-        d3.cc(CC_NOT_INVERTED, 122)
-    good = d3.s.muted == 1
-    print(f"   holds muted through interleaved pairs   "
-          f"{'ok' if good else '<-- FLICKERS'}")
-    ok &= good
-    return ok
+    print(f"   CC 48/49 leave the card unmuted   "
+          f"{'ok' if good else '<-- STILL WIRED'}")
+    return good
 
 
 def check_button_breath():
@@ -376,36 +393,40 @@ def check_button_breath():
 
 
 def check_volume():
-    print("\n9. Volume: bipolar, full at the centre detent")
+    print("\n9. Volume: fader 7 plus a bipolar front/back lift")
     ok = True
     d = Dispatch()
     good = d.s.volume == 32767 and d.s.volume_from_midi == 0
-    print(f"   full volume before any tilt: {d.s.volume}   "
+    print(f"   full before any message: {d.s.volume}   "
           f"{'ok' if good else 'FAIL'}")
     ok &= good
 
-    d.cc(CC_VOLUME, 64)
-    good = d.s.volume == 32767
-    print(f"   CC 42 = 64 (level) -> {d.s.volume:5d}   "
-          f"{'ok - full' if good else '<-- NOT FULL AT CENTRE'}")
+    # A LEVEL device with the fader up must be loud. The previous design
+    # was silent here, which is the bug this replaced.
+    d.cc(CC_VOLUME, 127)
+    d.cc(CC_LIFT_FRONT, 0)
+    d.cc(CC_LIFT_BACK, 0)
+    good = d.s.volume > 32000
+    print(f"   fader up, device level:  {d.s.volume:5d}   "
+          f"{'ok' if good else '<-- SILENT WHEN LEVEL'}")
     ok &= good
 
-    for v in (0, 127):
-        dd = Dispatch()
-        dd.cc(CC_VOLUME, v)
-        good = dd.s.volume < 1200
-        if not good:
-            ok = False
-        print(f"   CC 42 = {v:3d} (extreme) -> {dd.s.volume:5d}   "
-              f"{'ok - silent' if good else '<-- NOT SILENT'}")
-
-    # The partner must not fight it.
+    # Duck from the top.
     d2 = Dispatch()
-    d2.cc(CC_VOLUME, 64)
-    d2.cc(CC_VOLUME_PARTNER, 0)
-    good = d2.s.volume == 32767
-    print(f"   CC 43 partner leaves it alone: {d2.s.volume:5d}   "
-          f"{'ok' if good else '<-- PARTNER FOUGHT'}")
+    d2.cc(CC_VOLUME, 127)
+    d2.cc(CC_LIFT_BACK, 127)
+    good = d2.s.volume < 500
+    print(f"   fader up, back lifted:   {d2.s.volume:5d}   "
+          f"{'ok - ducks to silence' if good else 'FAIL'}")
+    ok &= good
+
+    # Swell from half.
+    d3 = Dispatch()
+    d3.cc(CC_VOLUME, 64)
+    d3.cc(CC_LIFT_FRONT, 127)
+    good = d3.s.volume > 32000
+    print(f"   fader half, front lifted:{d3.s.volume:5d}   "
+          f"{'ok - swells to full' if good else 'FAIL'}")
     ok &= good
     return ok
 
@@ -553,7 +574,7 @@ def check_channel_agnostic():
 
 def main():
     print("TRACT8 8mu MIDI check: faders 34 openness, 41 front, 36 breath,")
-    print("  37 pitch, 38 bright; tilt 42 volume, 44 round, 49 mute")
+    print("  37 pitch, 38 bright, 40 volume; lifts 42/43 vol, 44/45 round")
     ok = check_faders()
     ok &= check_notes()
     ok &= check_running_status()

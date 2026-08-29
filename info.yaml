@@ -3,7 +3,7 @@ Name: TRACT8
 Description: An eight-band Voder - the 1939 Bell Labs talking machine - played by hand from a Music Thing 8mu over USB MIDI Host, one fader per formant band, or from the card's own knobs.
 Language: C++ (ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: "1.5.0"
+Version: "1.6.0"
 Status: Working on hardware
 License: MIT
 repository: https://github.com/uglifruit/WorkshopTract8
@@ -26,7 +26,7 @@ contact:
 
 uf2:
   - path: UF2/tract8.uf2
-    name: TRACT8 1.5.0
+    name: TRACT8 1.6.0
 
 tags:
   - synth
@@ -56,14 +56,14 @@ summary: |
   the lips are rounded - and every vowel lives somewhere in that cube, with
   diphthongs on the way between. Openness and front are the outermost two
   faders, 1 and 8, so the hand spans the device; rounding is the left-right
-  tilt of the controller, unrounded when level and moving toward OO at
-  either extreme. Fader 3 is breath, the buzz-to-noise balance,
-  fader 4 is pitch and fader 5 is brightness. Tilting forward and back is
-  volume - full when the controller is level, fading to silence at either
-  extreme, on a curve that favours staying audible - so a phrase can be swelled and ducked without letting go of
-  anything, and turning the whole thing upside down is a mute, turning it back over
-  releasing it again. Each accelerometer axis is bipolar about a centre
-  detent, read from one half of its complementary pair.<br><br>
+  lift of the controller. Fader 3 is breath, the buzz-to-noise balance,
+  fader 4 is pitch and fader 5 is brightness.<br><br>
+
+  Volume is fader 7 plus the front-back lift: the fader sets a base level
+  and lifting the front or back of the controller swings a full scale
+  either side of it, so a phrase can be swelled and ducked without letting
+  go of anything. The response favours staying audible, so holding the
+  controller roughly level costs nothing.<br><br>
 
   The four buttons gate the buzz, gate the noise, fire plosive consonants
   and latch a formant freeze; the first and last also add a little breath

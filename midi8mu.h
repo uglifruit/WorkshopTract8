@@ -21,8 +21,9 @@
 //   CC 37  fader 4   PITCH      F0, 50..500 Hz
 //   CC 38  fader 5   BRIGHT     spectral tilt
 //   CC 35, 39, 40    unassigned
-//   CC 42            VOLUME     tilt front/back, centre detent
-//   CC 44            ROUND      tilt left/right, centre detent
+//   CC 40  fader 7   VOLUME     base level
+//   CC 42/43         VOLUME TRIM  lift front/back, bipolar, adds to it
+//   CC 44/45         ROUND      lift left/right, bipolar
 //
 // THE ACCELEROMETER CCs ARE GESTURE MAGNITUDES, NOT BIPOLAR AXES. Each
 // direction is its own controller reporting how much of that gesture is
@@ -64,36 +65,48 @@ static constexpr uint8_t kCcFront = 41;      // fader 8
 static constexpr uint8_t kCcBreath = 36;     // fader 3
 static constexpr uint8_t kCcPitch = 37;      // fader 4
 static constexpr uint8_t kCcBright = 38;     // fader 5
+static constexpr uint8_t kCcVolume = 40;    // fader 7
 
 // Accelerometer.
 //
-// BOTH TILT AXES ARE BIPOLAR WITH A CENTRE DETENT. The 8mu reports each
-// axis as a pair of complementary controllers that add to 127, so a level
-// device sits at 64 on each, and 64 is therefore the neutral position:
+// THESE ARE *LIFT* GESTURES. Each one reads 0 when the device is level and
+// rises as that side is lifted, so a level 8mu sends 0 on ALL FOUR of
+// them. They are NOT a complementary pair adding to 127, and there is no
+// centre detent at 64.
 //
-//   VOLUME  (front/back, CC 42)  64 = full volume, either extreme = silent
-//   ROUND   (left/right, CC 44)  64 = unrounded,   either extreme = OO
+// Getting this wrong is what made the volume feel broken: treating 64 as
+// the neutral point meant full volume happened only at some specific
+// half-lifted angle, with the level position silent. Reported as "it feels
+// like only a very specific angle has volume", which is exactly what the
+// arithmetic predicts.
 //
-// Only one controller of each pair is read. Its partner adds to 127 and so
-// carries no information the first does not already have; reading both
-// would mean two writers racing for one value with the last message
-// winning.
-static constexpr uint8_t kCcVolume = 42;      // tilt front/back
-static constexpr uint8_t kCcVolumePartner = 43;
-static constexpr uint8_t kCcRound = 44;       // tilt left/right
-static constexpr uint8_t kCcRoundPartner = 45;
+// The real axis is the DIFFERENCE of a pair:
+//
+//     axis = lift_one - lift_other        range -127 .. +127
+//
+// which is 0 when level, positive lifting one way and negative the other.
+// That is genuinely bipolar, and both halves must be read to get it -
+// unlike a complementary pair, here each half carries real information.
+static constexpr uint8_t kCcLiftFront = 42;
+static constexpr uint8_t kCcLiftBack = 43;
+static constexpr uint8_t kCcLiftLeft = 44;
+static constexpr uint8_t kCcLiftRight = 45;
 
+// Mute is DISABLED for now, at the player's request: it was confusing the
+// diagnosis of the tilt behaviour. The CC numbers are kept so it is
+// obvious what to re-enable, and the polarity note is kept with them
+// because it took four attempts to establish.
+//
 // CC 49 reads HIGH while the device is the RIGHT WAY UP and falls when it
-// is turned over, despite being labelled "inverted" in the 8mu docs. The
-// mute therefore triggers on a LOW value. CC 48 is its complementary
-// partner and is not read. See midi8mu.cpp for the failed attempts that
-// established this.
-static constexpr uint8_t kCcNotInverted = 48;  // partner, unread
-static constexpr uint8_t kCcInverted = 49;     // low = turned over = mute
+// is turned over, despite being labelled "inverted" in the 8mu docs, so
+// the mute triggered on a LOW value. CC 48 is its partner.
+static constexpr uint8_t kCcNotInverted = 48;
+static constexpr uint8_t kCcInverted = 49;
 
-// Centre of a bipolar tilt axis, in raw CC units. A level 8mu sits here
-// because the two halves of each pair add to 127.
-static constexpr int32_t kTiltCentre = 64;
+// How much the tilt can move the volume either side of the fader setting,
+// Q15. A full lift adds or subtracts this much, so the fader sets the
+// centre of a window the wrist can swing within.
+static constexpr int32_t kTiltVolumeRange = 32767;
 
 // Button notes.
 static constexpr uint8_t kNoteVoiced = 36;   // C2

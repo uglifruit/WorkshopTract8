@@ -11,7 +11,9 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
-## Current status: v1.5.0, bipolar tilt axes
+## Current status: v1.6.0, LIFT gestures understood at last
+
+## Previously: v1.5.0, bipolar tilt axes
 
 ## Previously: v1.4.1, accelerometer semantics fixed
 
@@ -380,7 +382,70 @@ loudly. WorkshopSpectral modelled 51% and measured 231% on real silicon. **CV
 Out 2 is the authority on this card's cost.** Once TRACT8 has run on hardware,
 replace the prediction with the reading.
 
-## The tilt axes are bipolar with a centre detent (v1.5.0)
+## They are LIFT gestures (v1.6.0)
+
+The fact everything turns on, and it took six versions to establish:
+
+> **Each gesture reads 0 when the device is LEVEL and rises as that side is
+> lifted. A level 8mu sends 0 on all four. They are NOT a complementary
+> pair adding to 127, and there is NO centre detent at 64.**
+
+So a physical axis is the DIFFERENCE of its pair:
+
+```
+axis = lift_front - lift_back        -127 .. +127, zero when level
+```
+
+Both halves must be read here, because each carries real information -
+unlike a complementary pair, where one half is redundant.
+
+### Why the previous version felt broken
+
+v1.5.0 assumed a detent at 64 and computed `full - (|cc42 - 64|)^2`:
+
+| device | CC 42 | deviation | volume |
+|---|---|---|---|
+| level | 0 | 64 | **silent** |
+| half lifted | 64 | 0 | full |
+| fully lifted | 127 | 63 | silent |
+
+Full volume happened only at one specific half-lifted angle, and the
+natural resting position was silent. Reported as *"it feels like only a
+very specific angle has volume"* - a better description of the fault than
+anything the code comments claimed at the time.
+
+### Volume is now a fader plus a bipolar lift
+
+Fader 7 (CC 40) sets the base; the front/back lift swings a full scale
+either side of it. A fader at half gives a full swell above and a full duck
+below; at the top the card is loud until the back is lifted. Squared
+response, so a quarter lift costs 0.6 dB - holding the controller roughly
+level is fine, and the expressive travel is at a deliberate lift.
+
+Rounding is the left/right lift, bipolar in the sense that either side
+moves toward the rounded (OO) face.
+
+**Mute is disabled** at the player's request; it was confusing the
+diagnosis. The CC numbers and the hard-won polarity note survive in
+`midi8mu.h` for whenever it comes back.
+
+### Six versions, and the pattern in them
+
+1. `32767 - lift_back + lift_front` - assumed lift_back rests at zero.
+2. Running-minimum "rest" plus `abs()` - solved a non-problem, folded the axis.
+3. Straight 0-127 levels - a level controller sat at half volume.
+4. Mute polarity inverted - muted during normal use.
+5. Centre detent at 64 - full volume only at a half-lifted angle.
+6. This one: lift differences, which is what the device actually sends.
+
+Five of those six produced a control that appeared **absent** rather than
+**wrong**. Counting the silent filter bank and the dead knob, that is six
+times on this card. **When a control seems to do nothing at all, suspect
+the mapping before the wiring** - and when the mapping is a guess about
+someone else's hardware, ask rather than infer. Every one of these was
+settled in a sentence once the question was put directly.
+
+## Previously: the tilt axes as a centre detent (v1.5.0, wrong)
 
 The accelerometer pairs add to 127, so a level 8mu sits at **64** on each
 axis. That makes 64 the natural neutral point, and both tilt controls are

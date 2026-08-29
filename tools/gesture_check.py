@@ -1,49 +1,52 @@
 #!/usr/bin/env python3
-"""8mu accelerometer semantics, as stated by someone holding the device.
+"""8mu accelerometer semantics: they are LIFT gestures.
 
-THE SEMANTICS, ESTABLISHED THE HARD WAY:
+THE FACT EVERYTHING TURNS ON, and it took five wrong versions to establish:
 
-  - The CCs are CONTINUOUS LEVELS, 0-127, sweeping as the device tilts.
-  - They come in COMPLEMENTARY PAIRS that add to 127, so a level device
-    sits at 64 on each axis.
-  - CC 49, despite its "inverted" label, reads HIGH while the device is the
-    right way up and falls when it is turned over.
+    Each gesture reads 0 when the device is LEVEL and rises as that side is
+    lifted. A level 8mu sends 0 on all four. They are NOT a complementary
+    pair adding to 127, and there is NO centre detent at 64.
 
-Because a level device sits at 64, both tilt axes are BIPOLAR WITH A CENTRE
-DETENT: the effect is the deviation from 64 in either direction.
+So a physical axis is the DIFFERENCE of its pair:
 
-  VOLUME  (front/back, CC 42)  64 = full volume, either extreme = silent
-  ROUND   (left/right, CC 44)  64 = unrounded,   either extreme = OO
+    axis = lift_front - lift_back      -127 .. +127, zero when level
 
-The response is SQUARED so that it favours the neutral state - the card
-stays audible through most of the travel and only falls away near the ends,
-so an imperfectly level controller does not quietly rob level.
+Both halves must be read, because here each carries real information -
+unlike a complementary pair, where one half is redundant.
 
-FOUR VERSIONS OF THIS REACHED HARDWARE BEFORE IT WAS RIGHT, and every one
-failed by inventing semantics rather than asking:
+The version before this assumed a detent at 64. The consequence is worth
+spelling out, because it is a good example of an assumption producing a
+symptom that looks like something else entirely:
 
-  1. volume = 32767 - lift_back + lift_front. Assumes lift_back rests at
-     zero; it does not, so the card was quiet from boot and - being already
-     clamped at the bottom - moving the controller changed nothing audible.
-  2. A running-minimum "rest" with the deviation as a magnitude: a solution
-     to a problem that does not exist, and abs() folded the axis so half
-     the travel mirrored the other.
-  3. Straight 0-127 levels, which made a level controller sit at half
-     volume and only reach full at one extreme.
-  4. Mute read as high-means-inverted, which muted the card during normal
-     use and unmuted it only when turned over.
+    volume = full - (|cc42 - 64|)^2
 
-Three of those four produced a control that appeared ABSENT rather than
-WRONG - the hardest kind to diagnose from the bench, and a pattern this
-card has now hit four times counting the silent filter bank and the dead
-knob. Every time, a clamp or a fold was hiding a bad assumption underneath.
+    level     (cc42 = 0)   -> deviation 64 -> SILENT
+    half lift (cc42 = 64)  -> deviation  0 -> full volume
+    full lift (cc42 = 127) -> deviation 63 -> SILENT
+
+Full volume happened only at one specific half-lifted angle, and the
+natural resting position was silent. Reported from hardware as "it feels
+like only a very specific angle has volume" - which is precisely what the
+arithmetic predicts, and a much better description of the fault than
+anything the code comments claimed at the time.
+
+VOLUME IS NOW A FADER PLUS A BIPOLAR TILT. Fader 7 sets the base level and
+the front/back lift swings a full scale either side of it, so a fader at
+half gives a full swell above and a full duck below. Rounding is the
+left/right lift, bipolar about level in the sense that lifting either side
+moves toward the rounded (OO) face - direction does not matter there, only
+distance.
+
+Mute is disabled in this build at the player's request; it was confusing
+the diagnosis. Its polarity note is kept in midi8mu.h for whenever it comes
+back.
 
 Checks:
-  1. Volume is full at the centre detent and silent at both extremes.
-  2. The volume curve favours ON - shallow near centre, steep at the ends.
-  3. Rounding is unrounded at centre and fully round at both extremes.
-  4. The complementary partner is ignored, so the pair cannot fight.
-  5. Mute polarity: CC 49 is HIGH when upright, LOW when turned over.
+  1. A LEVEL device is at full volume when the fader is up.
+  2. The fader alone is a working volume control.
+  3. Lifting back ducks; lifting front swells. Both reach the ends.
+  4. The tilt curve is gentle near level and steep at a real lift.
+  5. Rounding is unrounded when level and rounded at either lift.
 
 Run: python tools/gesture_check.py
 """
@@ -51,138 +54,196 @@ Run: python tools/gesture_check.py
 import sys
 import math
 
-CC_VOLUME = 42          # read
-CC_VOLUME_PARTNER = 43  # complementary partner - deliberately ignored
-CC_ROUND = 44           # read
-CC_ROUND_PARTNER = 45   # complementary partner - deliberately ignored
-CC_NOT_INVERTED = 48
-CC_INVERTED = 49
-TILT_CENTRE = 64
+CC_VOLUME = 40        # fader 7 - base volume
+CC_LIFT_FRONT = 42
+CC_LIFT_BACK = 43
+CC_LIFT_LEFT = 44
+CC_LIFT_RIGHT = 45
+TILT_VOLUME_RANGE = 32767
 
 
 class Firmware:
     """Transcription of the accelerometer path in midi8mu.cpp."""
 
     def __init__(self):
+        self.vol_fader = 32767
+        self.front = 0
+        self.back = 0
+        self.left = 0
+        self.right = 0
         self.volume = 32767
         self.round = 0
-        self.muted = 0
         self.freeze = 0
 
     @staticmethod
-    def _deviation(v):
-        d = abs(v - TILT_CENTRE)
-        if d > TILT_CENTRE:
-            d = TILT_CENTRE
-        return (d * d * 32767) // (TILT_CENTRE * TILT_CENTRE)
+    def _tilt_signed(a, b):
+        d = a - b
+        mag = abs(d)
+        q = (mag * mag * 32767) // (127 * 127)
+        return -q if d < 0 else q
+
+    def _update_volume(self):
+        v = self.vol_fader + (
+            (self._tilt_signed(self.front, self.back) * TILT_VOLUME_RANGE) >> 15)
+        self.volume = max(0, min(32767, v))
+
+    def _update_round(self):
+        t = self._tilt_signed(self.left, self.right)
+        self.round = abs(t)
 
     def cc(self, cc, v):
         if cc == CC_VOLUME:
-            self.volume = 32767 - self._deviation(v)
-        elif cc == CC_ROUND:
+            self.vol_fader = v << 8
+            self._update_volume()
+        elif cc == CC_LIFT_FRONT:
+            self.front = v
+            self._update_volume()
+        elif cc == CC_LIFT_BACK:
+            self.back = v
+            self._update_volume()
+        elif cc == CC_LIFT_LEFT:
             if not self.freeze:
-                self.round = self._deviation(v)
-        elif cc == CC_INVERTED:
-            self.muted = 1 if v < 64 else 0
-        # CC 43, 45 and 48 are complementary partners and are not read.
+                self.left = v
+                self._update_round()
+        elif cc == CC_LIFT_RIGHT:
+            if not self.freeze:
+                self.right = v
+                self._update_round()
 
 
-def check_volume_detent():
-    print("\n1. Volume: full at centre, silent at both extremes")
+def db(v):
+    return 20 * math.log10(max(v, 1) / 32767)
+
+
+def check_level_is_full():
+    """THE regression. A level device must be loud, not silent."""
+    print("\n1. A LEVEL device is at full volume")
     ok = True
+
+    f = Firmware()
+    good = f.volume == 32767
+    print(f"   before any message        -> {f.volume:5d}   "
+          f"{'ok' if good else 'FAIL'}")
+    ok &= good
+
+    # Fader up, device flat: all four lifts at zero.
+    f = Firmware()
+    f.cc(CC_VOLUME, 127)
+    for cc in (CC_LIFT_FRONT, CC_LIFT_BACK, CC_LIFT_LEFT, CC_LIFT_RIGHT):
+        f.cc(cc, 0)
+    good = f.volume > 32000
+    print(f"   fader up, device level    -> {f.volume:5d}  {db(f.volume):5.1f} dB"
+          f"   {'ok' if good else '<-- SILENT WHEN LEVEL (the bug)'}")
+    ok &= good
+    print("   (the centre-detent version scored 0 here - full volume")
+    print("    happened only at a specific half-lifted angle)")
+    return ok
+
+
+def check_fader():
+    print("\n2. Fader 7 alone is a working volume control")
+    ok = True
+    prev = None
+    monotonic = True
+    for cc in (0, 32, 64, 96, 127):
+        f = Firmware()
+        f.cc(CC_VOLUME, cc)
+        if prev is not None and f.volume < prev:
+            monotonic = False
+        prev = f.volume
+        print(f"   fader {cc:3d} -> {f.volume:5d}  {db(f.volume):6.1f} dB")
+    lo = Firmware()
+    lo.cc(CC_VOLUME, 0)
+    hi = Firmware()
+    hi.cc(CC_VOLUME, 127)
+    good = lo.volume < 500 and hi.volume > 32000 and monotonic
+    if not good:
+        ok = False
+    print(f"   full range and monotonic   {'ok' if good else '<-- FAIL'}")
+    return ok
+
+
+def check_tilt_swings():
+    print("\n3. Lifting back ducks, lifting front swells")
+    ok = True
+
+    # From the top, lifting back must reach silence.
+    f = Firmware()
+    f.cc(CC_VOLUME, 127)
+    f.cc(CC_LIFT_BACK, 127)
+    good = f.volume < 500
+    print(f"   fader full, back lifted   -> {f.volume:5d}   "
+          f"{'ok - silent' if good else '<-- CANNOT DUCK'}")
+    ok &= good
+
+    # From half, both directions must reach the ends.
     f = Firmware()
     f.cc(CC_VOLUME, 64)
-    centre = f.volume
-    good = centre == 32767
-    if not good:
-        ok = False
-    print(f"   CC 42 = 64 (level)      -> volume {centre:5d}   "
-          f"{'ok - FULL' if good else '<-- NOT FULL AT CENTRE'}")
-
-    for v in (0, 127):
-        f = Firmware()
-        f.cc(CC_VOLUME, v)
-        good = f.volume < 1200
-        if not good:
-            ok = False
-        print(f"   CC 42 = {v:3d} (extreme)   -> volume {f.volume:5d}   "
-              f"{'ok - silent' if good else '<-- NOT SILENT'}")
-
-    # Symmetric: equal deviation either side must give equal volume.
-    for d in (8, 16, 32, 48):
-        a = Firmware()
-        a.cc(CC_VOLUME, 64 - d)
-        b = Firmware()
-        b.cc(CC_VOLUME, 64 + d)
-        good = a.volume == b.volume
-        if not good:
-            ok = False
-        print(f"   +/-{d:2d} from centre       -> {a.volume:5d} / {b.volume:5d}   "
-              f"{'ok - symmetric' if good else '<-- ASYMMETRIC'}")
+    f.cc(CC_LIFT_FRONT, 127)
+    up = f.volume
+    f2 = Firmware()
+    f2.cc(CC_VOLUME, 64)
+    f2.cc(CC_LIFT_BACK, 127)
+    down = f2.volume
+    good = up > 32000 and down < 500
+    print(f"   fader half: front {up:5d}, back {down:5d}   "
+          f"{'ok - full swing both ways' if good else '<-- LIMITED'}")
+    ok &= good
+    print("   (this is the expressive part: the fader sets where the")
+    print("    wrist's neutral sits, and the tilt swings around it)")
     return ok
 
 
-def check_favours_on():
-    """The curve must be shallow near centre and steep at the ends."""
-    print("\n2. The curve favours ON")
+def check_tilt_curve():
+    print("\n4. The tilt curve is gentle near level")
     ok = True
-    print("   CC 42   volume      dB")
-    for v in (64, 80, 96, 112, 120, 127):
+    print("   lift back   volume      dB")
+    for b in (0, 16, 32, 64, 96, 127):
         f = Firmware()
-        f.cc(CC_VOLUME, v)
-        db = 20 * math.log10(max(f.volume, 1) / 32767)
-        print(f"    {v:3d}    {f.volume:5d}   {db:6.1f}")
+        f.cc(CC_VOLUME, 127)
+        f.cc(CC_LIFT_BACK, b)
+        print(f"      {b:3d}       {f.volume:5d}   {db(f.volume):6.1f}")
 
-    # A quarter tilt must still be essentially full volume; a linear curve
-    # would be 2.5 dB down there, which is an audible loss for a controller
-    # that is merely being held imperfectly level.
-    q = Firmware()
-    q.cc(CC_VOLUME, 64 + 16)
-    q_db = 20 * math.log10(max(q.volume, 1) / 32767)
-    good = q_db > -1.5
-    if not good:
-        ok = False
-    print(f"   quarter tilt is {q_db:.1f} dB down   "
-          f"{'ok - still on' if good else '<-- TOO LOSSY'}")
-
-    # And the end must genuinely be silent, not merely quiet.
-    e = Firmware()
-    e.cc(CC_VOLUME, 127)
-    e_db = 20 * math.log10(max(e.volume, 1) / 32767)
-    good = e_db < -25
-    if not good:
-        ok = False
-    print(f"   full tilt is {e_db:.1f} dB down   "
-          f"{'ok - silent' if good else '<-- NOT SILENT ENOUGH'}")
-    return ok
-
-
-def check_round_detent():
-    print("\n3. Rounding: unrounded at centre, OO at both extremes")
-    ok = True
+    # A small unintended lift must not cost real level.
     f = Firmware()
-    f.cc(CC_ROUND, 64)
+    f.cc(CC_VOLUME, 127)
+    f.cc(CC_LIFT_BACK, 32)
+    d = db(f.volume)
+    good = d > -1.5
+    if not good:
+        ok = False
+    print(f"   a quarter lift costs {d:.1f} dB   "
+          f"{'ok - holding it roughly level is fine' if good else '<-- TWITCHY'}")
+    return ok
+
+
+def check_round():
+    print("\n5. Rounding: unrounded when level, rounded at either lift")
+    ok = True
+
+    f = Firmware()
+    f.cc(CC_LIFT_LEFT, 0)
+    f.cc(CC_LIFT_RIGHT, 0)
     good = f.round < 200
-    if not good:
-        ok = False
-    print(f"   CC 44 = 64 (level)    -> round {f.round:5d}   "
+    print(f"   level          -> round {f.round:5d}   "
           f"{'ok - unrounded' if good else '<-- ROUNDED AT REST'}")
+    ok &= good
 
-    for v in (0, 127):
+    for cc, name in ((CC_LIFT_LEFT, "left"), (CC_LIFT_RIGHT, "right")):
         f = Firmware()
-        f.cc(CC_ROUND, v)
-        good = f.round > 30000
+        f.cc(cc, 127)
+        good = f.round > 32000
         if not good:
             ok = False
-        print(f"   CC 44 = {v:3d} (extreme) -> round {f.round:5d}   "
-              f"{'ok - toward OO' if good else '<-- NOT ROUNDED'}")
+        print(f"   {name:5} lifted   -> round {f.round:5d}   "
+              f"{'ok - toward OO' if good else '<-- FAIL'}")
 
-    # Freeze must hold the vowel, rounding included.
+    # Freeze must hold the vowel.
     f = Firmware()
-    f.cc(CC_ROUND, 100)
+    f.cc(CC_LIFT_LEFT, 100)
     before = f.round
     f.freeze = 1
-    f.cc(CC_ROUND, 64)
+    f.cc(CC_LIFT_LEFT, 0)
     good = f.round == before
     if not good:
         ok = False
@@ -190,74 +251,14 @@ def check_round_detent():
     return ok
 
 
-def check_partner_ignored():
-    print("\n4. The complementary partner is ignored")
-    ok = True
-    f = Firmware()
-    for v in range(0, 128, 8):
-        f.cc(CC_VOLUME, 64)              # hold level
-        f.cc(CC_VOLUME_PARTNER, 127 - v)  # partner sweeps, must do nothing
-    good = f.volume == 32767
-    print(f"   partner sweep leaves volume at {f.volume:5d}   "
-          f"{'ok' if good else '<-- PARTNER FOUGHT'}")
-    ok &= good
-
-    f2 = Firmware()
-    f2.cc(CC_VOLUME_PARTNER, 0)
-    f2.cc(CC_ROUND_PARTNER, 127)
-    good = f2.volume == 32767 and f2.round == 0
-    print(f"   partners alone change nothing   {'ok' if good else 'FAIL'}")
-    ok &= good
-    print("   (each pair adds to 127, so one controller is the whole axis;")
-    print("    reading both would be two writers racing for one value)")
-    return ok
-
-
-def check_mute():
-    print("\n5. Mute: CC 49 reads high when upright, low when turned over")
-    ok = True
-    for v in (127, 120, 100, 80, 64):
-        f = Firmware()
-        f.cc(CC_INVERTED, v)
-        if f.muted != 0:
-            ok = False
-    print(f"   CC 49 high (64-127, upright)   -> NOT muted   "
-          f"{'ok' if ok else '<-- BACKWARDS'}")
-
-    inv_ok = True
-    for v in (0, 5, 20, 40, 63):
-        f = Firmware()
-        f.cc(CC_INVERTED, v)
-        if f.muted != 1:
-            inv_ok = False
-    print(f"   CC 49 low  (0-63, turned over) -> muted       "
-          f"{'ok' if inv_ok else '<-- FAIL'}")
-    ok &= inv_ok
-
-    f = Firmware()
-    good = f.muted == 0
-    print(f"   unmuted before any message   {'ok' if good else 'FAIL'}")
-    ok &= good
-
-    f2 = Firmware()
-    for _ in range(20):
-        f2.cc(CC_INVERTED, 5)
-        f2.cc(CC_NOT_INVERTED, 122)
-    good = f2.muted == 1
-    print(f"   holds muted while both stream   "
-          f"{'ok' if good else '<-- FLICKERS'}")
-    ok &= good
-    return ok
-
-
 def main():
     print("TRACT8 8mu accelerometer check")
-    print("  Bipolar axes with a centre detent at 64; squared response.")
-    ok = check_volume_detent()
-    ok &= check_favours_on()
-    ok &= check_round_detent()
-    ok &= check_partner_ignored()
-    ok &= check_mute()
+    print("  LIFT gestures: 0 when level, rising as a side is lifted.")
+    ok = check_level_is_full()
+    ok &= check_fader()
+    ok &= check_tilt_swings()
+    ok &= check_tilt_curve()
+    ok &= check_round()
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1
 

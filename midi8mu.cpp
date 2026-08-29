@@ -36,44 +36,56 @@ static inline int32_t CcToQ15(uint8_t v) { return (int32_t)v << 8; }
 // first message on each axis establishes that axis's rest point; from then
 // on only the DEVIATION from rest is used. That works whatever the 8mu
 // happens to send when level, and it needs no configuration.
-// The accelerometer axes are CONTINUOUS LEVELS, 0-127, reported as
-// complementary pairs that add to 127. A level device therefore sits at 64
-// on each axis, and 64 is the neutral point of a bipolar control.
+// The accelerometer gestures are LIFTS: each reads 0 when the device is
+// level and rises as that side is lifted. A level 8mu sends 0 on all four.
 //
-// Both axes are BIPOLAR WITH A CENTRE DETENT: the effect is the DEVIATION
-// from centre, in either direction, not the raw level. Tilting one way or
-// the other does the same thing, which is what makes them playable - you
-// do not have to remember which way is which, only how far.
-//
-// The response is SQUARED, which biases the control toward its neutral
-// state. That is deliberate for volume in particular: the card should stay
-// audible through most of the travel and only fall away near the ends, so
-// that an imperfectly level controller does not quietly rob level. At a
-// quarter tilt a squared curve is 0.6 dB down where a linear one is 2.5 dB
-// down; at the extreme both reach silence. A cubed curve was tried and
-// clings to full volume too long to read as a fade at all.
+// So each physical axis is the DIFFERENCE of its pair, -127..+127, zero
+// when level. Both halves are read, because here each carries real
+// information - unlike a complementary pair, where one is redundant.
+static int32_t s_lift_front = 0;
+static int32_t s_lift_back = 0;
+static int32_t s_lift_left = 0;
+static int32_t s_lift_right = 0;
 
-// Deviation from the centre detent, squared, Q15. Returns 0 at centre and
-// 32767 at either extreme of the axis.
-static int32_t TiltDeviation(uint8_t v) {
-  int32_t d = (int32_t)v - kTiltCentre;
-  if (d < 0) d = -d;
-  if (d > kTiltCentre) d = kTiltCentre;      // v = 0 gives exactly 64
-  // (d/64)^2 in Q15, computed as (d*d << 15) / (64*64) without overflow:
-  // d*d is at most 4096, so the shift is safe in int32.
-  return (d * d * 32767) / (kTiltCentre * kTiltCentre);
+// Volume from fader 7, before the tilt is added. Held separately so the
+// two contributions can be recombined whenever either changes.
+static int32_t s_vol_fader = 32767;
+
+// Signed tilt, Q15, from a pair of lift gestures. Squared to keep the
+// response gentle around level, where the wrist naturally sits, and to put
+// the expressive part of the travel at a definite lift.
+static int32_t TiltSigned(int32_t a, int32_t b) {
+  const int32_t d = a - b;                       // -127 .. +127
+  const int32_t mag = d < 0 ? -d : d;
+  int32_t q = (mag * mag * 32767) / (127 * 127);  // 0 .. 32767, squared
+  return d < 0 ? -q : q;
 }
 
-// Volume: full at the centre detent, falling to silence at either extreme.
-static void UpdateVolume(uint8_t v) {
-  g_state.volume = 32767 - TiltDeviation(v);
+// Volume is the fader plus the front/back tilt, which swings either side
+// of it. The fader sets where the wrist's neutral position sits, and the
+// tilt is worth a full scale in each direction from there - so a fader at
+// half gives a full swell above and a full duck below, while a fader at
+// the top is loud until the back is lifted.
+//
+// This replaces a centre-detent design that assumed the axis rested at 64.
+// It does not: it rests at 0, so full volume happened only at a specific
+// half-lifted angle and the level position was silent.
+static void UpdateVolume() {
+  int32_t v = s_vol_fader +
+              ((TiltSigned(s_lift_front, s_lift_back) * kTiltVolumeRange) >>
+               15);
+  if (v < 0) v = 0;
+  if (v > 32767) v = 32767;
+  g_state.volume = v;
   g_state.volume_from_midi = 1;
 }
 
-// Rounding, the vowel cube third axis: unrounded at the centre detent,
-// moving toward the OO end of the cube at either extreme.
-static void UpdateRound(uint8_t v) {
-  g_state.round = TiltDeviation(v);
+// Rounding, the vowel cube third axis. Bipolar about level: lifting either
+// side moves toward the rounded (OO) face of the cube, so direction does
+// not matter, only how far.
+static void UpdateRound() {
+  const int32_t t = TiltSigned(s_lift_left, s_lift_right);
+  g_state.round = t < 0 ? -t : t;
   g_state.round_from_midi = 1;
 }
 
@@ -111,51 +123,42 @@ static void HandleCc(uint8_t cc, uint8_t v) {
       g_state.bright_from_midi = 1;
       return;
 
-    case kCcInverted:
-      // CC 49 is HIGH while the device is the RIGHT WAY UP, and falls when
-      // it is turned over. The name is misleading - despite being listed
-      // as "inverted" it reads as an upright indicator on the hardware -
-      // so the sense here is deliberately the opposite of what the label
-      // suggests. Do not "fix" this to match the documentation.
-      //
-      // Fourth attempt at this control, and the previous three are worth
-      // recording because each failed differently:
-      //
-      //   1. Treated as a one-shot event: "if CC 49 arrives, mute". These
-      //      are continuous levels, so it fired constantly.
-      //   2. Treated as a level meaning inverted: "v >= 64 mutes". Since
-      //      the level is high when UPRIGHT, this muted the card during
-      //      normal use and unmuted it only when turned over - exactly
-      //      backwards, which is what was reported.
-      //   3. Paired with CC 48 as mutual exclusives, which cannot help
-      //      when the polarity of the reading itself is wrong.
-      //
-      // So: LOW means turned over, which mutes. The threshold sits at 64
-      // with the hysteresis the device already applies.
-      g_state.muted = (v < 64) ? 1 : 0;
-      return;
-
-    case kCcNotInverted:
-      // The complementary partner. CC 48 and CC 49 add to 127 like the
-      // other accelerometer pairs, so this carries no information CC 49
-      // does not already have, and reading both would mean two writers
-      // racing for one value. Left unread on purpose.
-      return;
-
     case kCcVolume:
-      // Front/back tilt is VOLUME. Level is full, either extreme silent.
-      UpdateVolume(v);
+      // Fader 7 sets the base volume; the tilt swings around it.
+      s_vol_fader = CcToQ15(v);
+      UpdateVolume();
       return;
 
-    case kCcRound:
-      // Left/right tilt is ROUNDING - the vowel cube third axis. Level is
-      // unrounded, either extreme moves toward OO.
+    case kCcLiftFront:
+      s_lift_front = v;
+      UpdateVolume();
+      return;
+
+    case kCcLiftBack:
+      s_lift_back = v;
+      UpdateVolume();
+      return;
+
+    case kCcLiftLeft:
       if (g_state.freeze) return;
-      UpdateRound(v);
+      s_lift_left = v;
+      UpdateRound();
+      return;
+
+    case kCcLiftRight:
+      if (g_state.freeze) return;
+      s_lift_right = v;
+      UpdateRound();
+      return;
+
+    case kCcInverted:
+    case kCcNotInverted:
+      // Mute disabled for now, at the player's request - it was confusing
+      // the diagnosis of the tilt behaviour. See midi8mu.h.
       return;
 
     default:
-      // Faders 2, 6, 7, the remaining gestures, everything else: dropped.
+      // Faders 2 and 6, the rotate gestures, everything else: dropped.
       return;
   }
 }
