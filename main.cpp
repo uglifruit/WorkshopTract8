@@ -60,6 +60,34 @@ static constexpr int32_t kBootSplash = 36000;
 // at 48 kHz.
 static constexpr int32_t kPanelDiv = 3;
 
+// BABBLE alt-boot: hold the switch DOWN at power-on.
+//
+// Each knob drives several parameters at once, so three knobs and a gate
+// give chattering speech with no controller attached. The normal mode maps
+// one knob to one parameter, which is right for playing deliberately and
+// wrong for getting a texture going quickly.
+//
+// The boot detection is the NIBBLE-KO method, verbatim, because that one is
+// proven on this hardware and the obvious alternative is a known trap:
+//
+//   - ONE reading, taken after the full 0.5 s boot window has elapsed.
+//   - NEVER "Down seen at any point". The switch reads Down until it
+//     settles, so latching on any sighting latches on every boot.
+//     WorkshopZX and WorkshopBio both shipped that bug.
+//
+// Down is safe as the trigger here precisely because the reading happens
+// once, after the window, by which point the filter has settled.
+// BABBLE chatter rate, in samples per syllable. 2400 is 20 Hz, a trill;
+// 24000 is 2 Hz, unhurried speech. Knob X moves between them.
+//
+// The first version ran from the click length (8 ms, 125 Hz) to 250 ms,
+// which was wrong at both ends: 125 Hz is a buzz rather than chatter, and
+// at the slow end the click was a full second long against a 250 ms gap,
+// so the bursts overlapped into a continuous wash instead of separating
+// into syllables.
+static constexpr int32_t kBabbleMinPeriod = 2400;   // 20 Hz
+static constexpr int32_t kBabbleMaxPeriod = 24000;  // 2 Hz
+
 // Default click level with no 8mu attached, Q15. About -14 dB.
 //
 // The click is a broadband burst summed AFTER the filter bank, so it is
@@ -121,7 +149,10 @@ class VoderCard : public ComputerCard {
     led_phase_ = 0;
     energy_smooth_ = 0;
     formant_cv_ = 0;
+    babble_decay_ = 16384;
+    babble_count_ = 0;
     gate_seen_ = false;
+    babble_ = false;
     diag_use_ext_ = false;
     diag_gated_ = false;
 
@@ -163,6 +194,25 @@ class VoderCard : public ComputerCard {
     }
   }
 
+  // Convert a decay length in samples to the Q15 value TriggerPlosive
+  // expects. The engine maps its control with a squared curve, so this
+  // takes a square root - done by bisection because there is no sqrt on
+  // the hot path worth having, and this runs a few times a second at most.
+  static int32_t __not_in_flash_func(SamplesToDecayQ15)(int32_t samples) {
+    if (samples <= kPlosiveSamples) return 0;
+    if (samples >= kPlosiveMaxSamples) return 32767;
+    int32_t lo = 0, hi = 32767;
+    for (int i = 0; i < 12; i++) {          // 12 steps resolves to ~8
+      const int32_t mid = (lo + hi) >> 1;
+      const int32_t sq = (int32_t)(((int64_t)mid * mid) >> 15);
+      const int32_t len = kPlosiveSamples +
+                          (int32_t)(((int64_t)(kPlosiveMaxSamples -
+                                               kPlosiveSamples) * sq) >> 15);
+      if (len < samples) lo = mid; else hi = mid;
+    }
+    return lo;
+  }
+
   // True when the 8mu is present AND has actually sent this control.
   //
   // Both halves matter. The flag alone latches forever, so unplugging the
@@ -185,6 +235,13 @@ class VoderCard : public ComputerCard {
     // --- boot mute --------------------------------------------------------
     if (boot_mute_ > 0) {
       boot_mute_--;
+
+      // ONE reading, after the full window has elapsed - tested after the
+      // decrement so the last sample is included. See kBabbleLfoRate for
+      // why this is not "Down seen at any point".
+      if (boot_mute_ == 0) {
+        babble_ = (SwitchVal() == Switch::Down);
+      }
       AudioOut1(0);
       AudioOut2(0);
       CVOut1(0);
@@ -288,6 +345,7 @@ class VoderCard : public ComputerCard {
     // what a plosive input should give you before anyone touches a fader.
     p.click_decay =
         MidiOwns(g_state.click_decay_from_midi) ? g_state.click_decay
+        : babble_                               ? babble_decay_
                                                 : kDefaultClickDecay;
 
     // Audio In 1 is an EXTERNAL EXCITER, summed with the internal buzz
@@ -328,6 +386,32 @@ class VoderCard : public ComputerCard {
     const bool pulse1 = PulseIn1();
     if (pulse1 && !last_pulse1_) voder_.TriggerPlosive(p.click_decay);
     last_pulse1_ = pulse1;
+
+    // BABBLE: a HELD gate on either pulse input chatters by itself, so a
+    // single sustained gate is enough to get the card talking. The rate
+    // follows the click decay, so Knob X speeds it up and slows it down
+    // along with everything else it does.
+    //
+    // Without this the mode would still need a stream of triggers from
+    // somewhere, which defeats the point of a one-cable texture.
+    if (babble_ && (pulse1 || PulseIn2())) {
+      if (--babble_count_ <= 0) {
+        const int32_t period =
+            kBabbleMinPeriod +
+            (int32_t)(((int64_t)(kBabbleMaxPeriod - kBabbleMinPeriod) *
+                       babble_decay_) >> 15);
+        babble_count_ = period;
+
+        // The click length is tied to a THIRD of the period rather than
+        // set independently, so a burst always finishes well before the
+        // next one starts. That separation is what makes it read as
+        // chatter; letting the two be set separately allowed a long click
+        // at a fast rate, which merges into a wash.
+        voder_.TriggerPlosive(SamplesToDecayQ15(period / 3));
+      }
+    } else {
+      babble_count_ = 0;
+    }
 
     // Switch down is a momentary plosive key - the Voder's stop keys were
     // played with the left hand, and this is the nearest thing the panel
@@ -471,7 +555,33 @@ class VoderCard : public ComputerCard {
     // The card must be fully playable from its own front panel, both
     // because not everyone has an 8mu and because the controller can be
     // unplugged mid-session - see MidiOwns().
-    if (sw == Switch::Up) {
+    if (babble_) {
+      // BABBLE: every knob moves several things at once.
+      //
+      // MAIN sweeps the vowel diagonally AND opens the mouth. One knob
+      // walks through recognisably different vowels rather than along one
+      // edge of the cube - the same diagonal the formant CV uses, and for
+      // the same reason: it crosses the middle where the vowels live.
+      panel_openness_ = knob_main_;
+      panel_front_ = 32767 - knob_main_;
+
+      // X is the CHATTER RATE. It drives the click decay short-to-long and
+      // the brightness together, so turning it up gives faster, brighter
+      // consonants - the two things that make speech sound hurried.
+      // Inverted decay: clockwise is shorter, which reads as faster.
+      babble_decay_ = 32767 - knob_x_;
+      panel_bright_ = 16384 + (knob_x_ >> 2);
+
+      // Y is the VOICE CHARACTER: breath and rounding together. Turning it
+      // up moves from a clear rounded vowel to a breathy spread one, which
+      // is the axis between a hum and a whisper.
+      panel_breath_ = knob_y_;
+      panel_round_ = 32767 - knob_y_;
+
+      // Pitch follows the vowel, so the diagonal sweep is also a melodic
+      // one. Kept to the lower half of the range, where speech lives.
+      panel_pitch_ = 4000 + (knob_main_ >> 2);
+    } else if (sw == Switch::Up) {
       panel_pitch_ = knob_main_;
       panel_bright_ = knob_x_;
       panel_round_ = knob_y_;
@@ -552,9 +662,18 @@ class VoderCard : public ComputerCard {
 
   void __not_in_flash_func(UpdateLeds)() {
     if (boot_splash_ > 0) {
-      // Chase across all six while the card wakes up.
-      const int32_t step = (kBootSplash - boot_splash_) >> 12;
-      for (int i = 0; i < 6; i++) LedOn(i, (step % 6) == i);
+      if (boot_mute_ > 0) {
+        // Still inside the mute: the switch has not been read yet, so the
+        // mode is not known. Chase rather than guess - showing the wrong
+        // mode would be worse than showing none.
+        const int32_t step = (kBootSplash - boot_splash_) >> 12;
+        for (int i = 0; i < 6; i++) LedOn(i, (step % 6) == i);
+      } else {
+        // Mode is known. Even LEDs for normal, odd for BABBLE - the
+        // NIBBLE-KO convention and its idiom. The splash runs on past the
+        // end of the mute so this is readable before the card speaks.
+        for (int i = 0; i < 6; i++) LedOn(i, ((i & 1) == 1) == babble_);
+      }
       return;
     }
 
@@ -611,7 +730,9 @@ class VoderCard : public ComputerCard {
   int32_t boot_mute_, boot_splash_;
   int32_t panel_phase_, morph_phase_;
   int32_t formant_cv_;
+  int32_t babble_decay_, babble_count_;
   bool gate_seen_;
+  bool babble_;
   bool diag_use_ext_, diag_gated_;
   int32_t knob_main_, knob_x_, knob_y_;
   int32_t panel_openness_, panel_front_, panel_breath_;

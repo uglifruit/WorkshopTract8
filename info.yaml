@@ -3,7 +3,7 @@ Name: TRACT8
 Description: An eight-band Voder - the 1939 Bell Labs talking machine - played by hand from a Music Thing 8mu over USB MIDI Host, one fader per formant band, or from the card's own knobs.
 Language: C++ (ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: "1.10.0"
+Version: "1.11.0"
 Status: Working on hardware
 License: MIT
 repository: https://github.com/uglifruit/WorkshopTract8
@@ -26,7 +26,7 @@ contact:
 
 uf2:
   - path: UF2/tract8.uf2
-    name: TRACT8 1.10.0
+    name: TRACT8 1.11.0
 
 tags:
   - synth
@@ -199,6 +199,25 @@ controls:
           The third vowel axis - lip rounding, toward the OO corner of the
           cube. Between the two pages the panel reaches every parameter the
           8mu can.
+  knobs_alt:
+    - when: "BABBLE alt-boot (hold switch Down at power-on)"
+      main:
+        name: SWEEP
+        description: >
+          Walks the vowel diagonally across the cube while raising the
+          pitch with it - one knob for a whole spoken gesture.
+      x:
+        name: CHATTER
+        description: >
+          Chatter rate and brightness together, 2 to 20 Hz. The click
+          length follows a third of the period so syllables always
+          separate.
+      y:
+        name: CHARACTER
+        description: >
+          Breath against rounding - a rounded hum at one end, a breathy
+          whisper at the other.
+
   leds:
     - when: "Running"
       display: list

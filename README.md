@@ -184,6 +184,27 @@ Breath has no CV input, because it has three physical routes already
 mounted. LED 5 shows voiced (bright) versus unvoiced (dim), or full brightness
 while frozen.
 
+## BABBLE mode (alt-boot)
+
+**Hold the switch down at power-on.** The boot LEDs light odd instead of
+even to confirm it.
+
+Each knob then drives several things at once, so the card talks from a
+single sustained gate with nothing else patched:
+
+| Knob | Controls |
+|---|---|
+| **Main** | Vowel diagonal **and** pitch — one sweep walks through vowels, rising as it goes |
+| **X** | Chatter rate **and** brightness — clockwise is faster and brighter |
+| **Y** | Breath **against** rounding — a rounded hum at one end, a breathy whisper at the other |
+
+Hold a gate on either pulse input and it chatters by itself, 2 Hz to 20 Hz
+across Knob X. The click length is tied to a third of the chatter period, so
+syllables always separate instead of merging into a wash.
+
+Normal mode is one knob per parameter, which is right for playing
+deliberately. This is for getting a texture going in seconds.
+
 ## Why the vowel morph is not alphabetical
 
 Knob 1 walks the table in the order **AH → OH → OO → UH → EH → EE**, which
