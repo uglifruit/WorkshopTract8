@@ -88,6 +88,31 @@ static constexpr int32_t kPanelDiv = 3;
 static constexpr int32_t kBabbleMinPeriod = 2400;   // 20 Hz
 static constexpr int32_t kBabbleMaxPeriod = 24000;  // 2 Hz
 
+// AUTO-CHATTER: hold the momentary switch DOWN for two seconds in BABBLE
+// to engage, tap it to leave. It generates its own gates - varied lengths,
+// grouped into phrases with breaths between them - so the card talks
+// unprompted, as if something were feeding Pulse In 2.
+//
+// The shape is what makes it read as speech rather than as a gate
+// sequencer. Real utterances are bursts of a few syllables with pauses
+// between, not an even stream, so this generates PHRASES: a run of 2-7
+// syllables of differing lengths, then a gap long enough to read as taking
+// a breath. An even stream of identical gates sounds like a machine no
+// matter how the syllables themselves are shaped.
+static constexpr int32_t kLongPressSamples = 96000;   // 2 s at 48 kHz
+
+// Syllables per phrase, and the pause after one. The pause is drawn from a
+// range rather than fixed, so phrases do not fall into a rhythm.
+static constexpr int32_t kPhraseMinSyllables = 2;
+static constexpr int32_t kPhraseMaxSyllables = 7;
+static constexpr int32_t kBreathMinSamples = 9600;    // 0.2 s
+static constexpr int32_t kBreathMaxSamples = 38400;   // 0.8 s
+
+// How often a syllable also gets a plosive, out of 256. Consonants on
+// every syllable read as percussion - the whole reason the automatic
+// click was removed - but a few give the phrase articulation.
+static constexpr int32_t kPlosiveChance = 70;         // ~27%
+
 // Default click level with no 8mu attached, Q15. About -14 dB.
 //
 // The click is a broadband burst summed AFTER the filter bank, so it is
@@ -152,6 +177,16 @@ class VoderCard : public ComputerCard {
     babble_decay_ = 16384;
     babble_count_ = 0;
     babble_open_ = false;
+    auto_count_ = 0;
+    auto_left_ = 0;
+    down_held_ = 0;
+    babble_animate_ = 12000;
+    babble_consonant_ = 9000;
+    anim_open_ = anim_front_ = anim_pitch_ = 0;
+    auto_rng_ = time_us_32() | 1u;
+    auto_chatter_ = false;
+    auto_open_ = false;
+    auto_plosive_ = false;
     gate_seen_ = false;
     babble_ = false;
     diag_use_ext_ = false;
@@ -193,6 +228,108 @@ class VoderCard : public ComputerCard {
     for (int i = 0; i < kNumBands; i++) {
       g_state.band_gain[i] = Clamp15(init_gains[i]);
     }
+  }
+
+  // AUTO-CHATTER phrase generator. Returns the state of the gate it is
+  // pretending to receive on Pulse In 2.
+  //
+  // Three levels of structure, because speech has three:
+  //   - a SYLLABLE is a gate high for a while, of a length drawn per
+  //     syllable so no two are quite alike;
+  //   - a PHRASE is 2-7 syllables run together;
+  //   - a BREATH is the gap between phrases.
+  //
+  // Without the phrase level this is a gate sequencer with a random clock,
+  // which sounds mechanical however the syllables are shaped. The pauses
+  // are what make it read as something with lungs.
+  bool __not_in_flash_func(AutoChatterGate)() {
+    if (--auto_count_ > 0) return auto_open_;
+
+    if (auto_open_) {
+      // A syllable just ended. Either continue the phrase with a short
+      // gap, or take a breath.
+      auto_open_ = false;
+      if (--auto_left_ > 0) {
+        // Within a phrase: a short gap, proportional to the syllable
+        // length so the rate knob still governs the tempo.
+        auto_count_ = kBabbleMinPeriod + (int32_t)(AutoRandom() % 4800u);
+      } else {
+        auto_count_ = kBreathMinSamples +
+                      (int32_t)(AutoRandom() %
+                                (uint32_t)(kBreathMaxSamples -
+                                           kBreathMinSamples));
+      }
+      return false;
+    }
+
+    // A gap just ended. Start a syllable; if the phrase is spent, start a
+    // new one and decide its length.
+    if (auto_left_ <= 0) {
+      auto_left_ = kPhraseMinSyllables +
+                   (int32_t)(AutoRandom() %
+                             (uint32_t)(kPhraseMaxSyllables -
+                                        kPhraseMinSyllables + 1));
+    }
+
+    auto_open_ = true;
+
+    // A new syllable: draw the animation offsets it will hold. Doing this
+    // per syllable rather than continuously is what makes it sound like
+    // speech - a spoken syllable holds its vowel and the next one differs,
+    // where a continuous modulation is a vibrato or a siren.
+    if (babble_animate_ > 0) {
+      const int32_t amt = babble_animate_;
+      anim_open_ = (int32_t)(((int64_t)((int32_t)(AutoRandom() % 24000u) -
+                                        12000) * amt) >> 15);
+      anim_front_ = (int32_t)(((int64_t)((int32_t)(AutoRandom() % 24000u) -
+                                         12000) * amt) >> 15);
+      anim_pitch_ = (int32_t)(((int64_t)((int32_t)(AutoRandom() % 8000u) -
+                                         4000) * amt) >> 15);
+    } else {
+      anim_open_ = anim_front_ = anim_pitch_ = 0;
+    }
+
+    // Syllable length: the babble rate sets the centre and this varies
+    // around it by up to 2x, so a phrase has long and short syllables in
+    // it the way a spoken one does.
+    // Squared, so natural speech sits in the MIDDLE of the rate knob.
+    //
+    // Linear put 3-7 syllables per second - the range human speech
+    // actually occupies - across the top third of the travel, with the
+    // whole lower half spent on rates slower than anyone talks. Squaring
+    // moves that band to roughly 35-75% of the knob, which is where a
+    // player expects the useful part of a control to be.
+    const int32_t sq =
+        (int32_t)(((int64_t)babble_decay_ * babble_decay_) >> 15);
+    const int32_t base =
+        kBabbleMinPeriod +
+        (int32_t)(((int64_t)(kBabbleMaxPeriod - kBabbleMinPeriod) * sq) >> 15);
+    auto_count_ = base + (int32_t)(AutoRandom() % (uint32_t)(base + 1));
+
+    // Some syllables get a consonant. Counted, not flagged, so the ISR
+    // path is identical to a MIDI or jack trigger.
+    // The consonant knob sets how many syllables get one. At zero the
+    // voice is legato; at full nearly every syllable is articulated.
+    // Capped at 3/4, deliberately. At the top of its travel the knob
+    // should give a heavily articulated voice, not a consonant on every
+    // syllable - that is the percussion failure mode the automatic click
+    // was removed to avoid, and a control that can reach it will be found
+    // there by accident.
+    uint32_t chance = (uint32_t)(babble_consonant_ >> 7);
+    if (chance > 192) chance = 192;
+    if ((AutoRandom() & 0xFF) < chance) {
+      auto_plosive_ = true;
+    }
+    return true;
+  }
+
+  // xorshift32, seeded from the timer at construction. Separate from the
+  // engine's PRNG so a phrase does not perturb the noise source.
+  uint32_t __not_in_flash_func(AutoRandom)() {
+    auto_rng_ ^= auto_rng_ << 13;
+    auto_rng_ ^= auto_rng_ >> 17;
+    auto_rng_ ^= auto_rng_ << 5;
+    return auto_rng_;
   }
 
   // True when the 8mu is present AND has actually sent this control.
@@ -327,7 +464,9 @@ class VoderCard : public ComputerCard {
     // full for when a loud click is wanted.
     p.click_level =
         MidiOwns(g_state.click_level_from_midi) ? g_state.click_level
-                                                : kDefaultClickLevel;
+        : babble_ ? (kDefaultClickLevel +
+                     (int32_t)(((int64_t)babble_consonant_ * 12000) >> 15))
+                  : kDefaultClickLevel;
 
     // Decay defaults short, not long. A full-length default made every
     // panel trigger a one-second noise wash; a consonant-length click is
@@ -381,16 +520,16 @@ class VoderCard : public ComputerCard {
     //
     // The chatter gates the VOICE. It used to fire a plosive on every
     // syllable, which put a click on the front of each one and made the
-    // whole mode read as percussion rather than as speech - too much, and
-    // not what the mode is for. Consonants are still available whenever
-    // they are wanted, from Pulse In 1, which triggers clicks in every
-    // mode; taking them off the automatic chatter means the player
-    // chooses when to have them rather than being given them by default.
+    // whole mode read as percussion rather than as speech. Consonants are
+    // still available from Pulse In 1, which triggers clicks in every
+    // mode, so the player chooses when to have them.
     //
-    // Each syllable is voiced for the first third of its period and
-    // silent for the rest, which is roughly the duty cycle of spoken
-    // syllables and reuses the separation the click length used to have.
-    if (babble_ && (pulse1 || PulseIn2())) {
+    // AUTO-CHATTER supplies its own gate when engaged, so the same code
+    // path runs whether the gate came from a jack or from here.
+    const bool chatter_gate = auto_chatter_ ? AutoChatterGate()
+                                            : (pulse1 || PulseIn2());
+
+    if (babble_ && chatter_gate) {
       const int32_t period =
           kBabbleMinPeriod +
           (int32_t)(((int64_t)(kBabbleMaxPeriod - kBabbleMinPeriod) *
@@ -402,10 +541,45 @@ class VoderCard : public ComputerCard {
       babble_open_ = false;
     }
 
-    // Switch down is a momentary plosive key - the Voder's stop keys were
-    // played with the left hand, and this is the nearest thing the panel
-    // has to one.
-    if (SwitchVal() == Switch::Down && SwitchChanged()) {
+    // Switch down: a momentary plosive key, and in BABBLE a two-second
+    // hold toggles AUTO-CHATTER.
+    //
+    // The plosive fires on the CHANGE, so a long hold makes one click and
+    // then arms the toggle rather than repeating. Leaving is a tap, so the
+    // gesture is asymmetric on purpose: engaging something that then plays
+    // by itself should take deliberate effort, while stopping it should
+    // not - the same reasoning as a panic button.
+    const bool down = (SwitchVal() == Switch::Down);
+    if (down && SwitchChanged()) {
+      voder_.TriggerPlosive(p.click_decay);
+      // A tap while auto-chatter is running stops it. Handled on the
+      // press rather than the release so it stops the instant it is
+      // touched.
+      if (auto_chatter_) {
+        auto_chatter_ = false;
+        auto_open_ = false;
+        auto_count_ = 0;
+        auto_left_ = 0;
+      }
+    }
+
+    if (babble_ && down && !auto_chatter_) {
+      if (++down_held_ >= kLongPressSamples) {
+        auto_chatter_ = true;
+        down_held_ = 0;
+        // Start on a breath, so engaging it does not bark immediately.
+        auto_open_ = false;
+        auto_left_ = 0;
+        auto_count_ = kBreathMinSamples;
+      }
+    } else {
+      down_held_ = 0;
+    }
+
+    // A syllable that drew a consonant fires it here, through the same
+    // counted path as every other trigger.
+    if (auto_plosive_) {
+      auto_plosive_ = false;
       voder_.TriggerPlosive(p.click_decay);
     }
 
@@ -545,31 +719,76 @@ class VoderCard : public ComputerCard {
     // because not everyone has an 8mu and because the controller can be
     // unplugged mid-session - see MidiOwns().
     if (babble_) {
-      // BABBLE: every knob moves several things at once.
+      // BABBLE has two pages of macros, because three knobs is not
+      // enough for a mode meant to be played with nothing else attached.
       //
-      // MAIN sweeps the vowel diagonally AND opens the mouth. One knob
-      // walks through recognisably different vowels rather than along one
-      // edge of the cube - the same diagonal the formant CV uses, and for
-      // the same reason: it crosses the middle where the vowels live.
-      panel_openness_ = knob_main_;
-      panel_front_ = 32767 - knob_main_;
+      // Page 1 (switch middle) is WHAT IS SAID: which vowel, how fast, how
+      // breathy. Page 2 (switch up) is WHO IS SAYING IT: the size and
+      // register of the voice, and how animated it is. Splitting them that
+      // way means each page is a coherent idea rather than an arbitrary
+      // six controls, and you can set a voice on page 2 and then play it
+      // on page 1.
+      if (sw == Switch::Up) {
+        // MAIN: VOICE SIZE. Sweeps from a small bright voice to a large
+        // dark one, which is three things moving together - pitch down,
+        // brightness down, and the vowel toward the back of the mouth.
+        // That combination is what actually distinguishes a big voice
+        // from a small one; pitch alone just sounds transposed.
+        const int32_t size = knob_main_;
+        panel_pitch_ = 24000 - (int32_t)(((int64_t)size * 20000) >> 15);
+        panel_bright_ = 26000 - (int32_t)(((int64_t)size * 20000) >> 15);
+        panel_front_ = 26000 - (int32_t)(((int64_t)size * 22000) >> 15);
+        panel_openness_ = 6000 + (int32_t)(((int64_t)size * 20000) >> 15);
 
-      // X is the CHATTER RATE. It drives the click decay short-to-long and
-      // the brightness together, so turning it up gives faster, brighter
-      // consonants - the two things that make speech sound hurried.
-      // Inverted decay: clockwise is shorter, which reads as faster.
-      babble_decay_ = 32767 - knob_x_;
-      panel_bright_ = 16384 + (knob_x_ >> 2);
+        // X: ANIMATION. How much the voice moves while it talks. At zero
+        // it is a monotone; turned up, each phrase wanders through the
+        // vowel cube and the pitch drifts with it. This is the control
+        // that decides whether it sounds like reading aloud or like
+        // muttering.
+        babble_animate_ = knob_x_;
 
-      // Y is the VOICE CHARACTER: breath and rounding together. Turning it
-      // up moves from a clear rounded vowel to a breathy spread one, which
-      // is the axis between a hum and a whisper.
-      panel_breath_ = knob_y_;
-      panel_round_ = 32767 - knob_y_;
+        // Y: CONSONANTS. The chance a syllable gets a plosive, and how
+        // loud it is when it does. Both together, so one knob goes from a
+        // smooth legato voice to a heavily articulated one.
+        babble_consonant_ = knob_y_;
+      } else {
+        // MAIN sweeps the vowel diagonally AND opens the mouth. One knob
+        // walks through recognisably different vowels rather than along
+        // one edge of the cube - the same diagonal the formant CV uses,
+        // and for the same reason: it crosses the middle where the
+        // vowels live.
+        panel_openness_ = knob_main_;
+        panel_front_ = 32767 - knob_main_;
 
-      // Pitch follows the vowel, so the diagonal sweep is also a melodic
-      // one. Kept to the lower half of the range, where speech lives.
-      panel_pitch_ = 4000 + (knob_main_ >> 2);
+        // X is the CHATTER RATE. It drives the syllable length and the
+        // brightness together, so turning it up gives faster, brighter
+        // speech - the two things that make speech sound hurried.
+        // Inverted: clockwise is shorter, which reads as faster.
+        babble_decay_ = 32767 - knob_x_;
+        panel_bright_ = 16384 + (knob_x_ >> 2);
+
+        // Y is the VOICE CHARACTER: breath and rounding together. Turning
+        // it up moves from a clear rounded vowel to a breathy spread one,
+        // which is the axis between a hum and a whisper.
+        panel_breath_ = knob_y_;
+        panel_round_ = 32767 - knob_y_;
+
+        // Pitch follows the vowel, so the diagonal sweep is also a melodic
+        // one. Kept to the lower half of the range, where speech lives.
+        panel_pitch_ = 4000 + (knob_main_ >> 2);
+      }
+
+      // ANIMATION is applied on both pages, since it is a property of the
+      // voice rather than of a page. Each syllable draws an offset, held
+      // for its duration, so the movement is per-syllable rather than a
+      // continuous wobble - speech moves in steps between syllables, not
+      // as a vibrato.
+      if (babble_animate_ > 0) {
+        panel_openness_ = Clamp15(panel_openness_ + anim_open_);
+        panel_front_ = Clamp15(panel_front_ + anim_front_);
+        panel_pitch_ = Clamp15(panel_pitch_ + anim_pitch_);
+      }
+
     } else if (sw == Switch::Up) {
       panel_pitch_ = knob_main_;
       panel_bright_ = knob_x_;
@@ -678,16 +897,26 @@ class VoderCard : public ComputerCard {
       LedBrightness(i, (uint16_t)(g >> 3));
     }
 
-    // Switch Down turns LEDs 0-3 into a diagnostic display instead of the
-    // band meters. Left in deliberately: when this card is silent, every
-    // possible cause looks the same from the front panel, and that cost a
-    // whole hardware round trip once already.
-    //
-    //   LED 0  excitation is gated shut (no buzz, no noise)
-    //   LED 1  external input has taken over from the internal sources
-    //   LED 2  formant freeze is latched
-    //   LED 3  all eight band gains are near zero
     if (SwitchVal() == Switch::Down) {
+      // In BABBLE, holding Down engages auto-chatter after two seconds,
+      // so the LEDs become a PROGRESS BAR for that hold. Without it the
+      // player is counting two seconds blind and cannot tell whether the
+      // gesture registered - and a two-second hold with no feedback feels
+      // broken long before it completes.
+      if (babble_ && !auto_chatter_) {
+        const int32_t lit = (down_held_ * 7) / kLongPressSamples;
+        for (int i = 0; i < 6; i++) LedOn(i, i < lit);
+        return;
+      }
+
+      // Otherwise the diagnostic display: when this card is silent every
+      // possible cause looks the same from the front panel, and working
+      // that out once cost a whole hardware round trip.
+      //
+      //   LED 0  excitation is gated shut (no buzz, no noise)
+      //   LED 1  external input has taken over from the internal sources
+      //   LED 2  formant freeze is latched
+      //   LED 3  all eight band gains are near zero
       int32_t gsum = 0;
       for (int i = 0; i < kBands; i++) gsum += g_state.band_gain[i];
       LedOn(0, diag_gated_);
@@ -696,6 +925,21 @@ class VoderCard : public ComputerCard {
       LedOn(3, gsum < 4096);
       LedOn(4, g_state.midi_connected != 0);
       LedBrightness(5, 4095);
+      return;
+    }
+
+    // AUTO-CHATTER running: LED 5 pulses with each syllable, so the panel
+    // shows that the card is talking by itself rather than merely being
+    // left switched on. Cheap, and it is the only outward sign that the
+    // mode is engaged once the switch is released.
+    if (auto_chatter_) {
+      LedBrightness(5, auto_open_ ? 4095 : 300);
+      for (int i = 0; i < 4; i++) {
+        const int32_t g = (g_state.band_gain[i * 2] +
+                           g_state.band_gain[i * 2 + 1]) >> 1;
+        LedBrightness(i, (uint16_t)(g >> 3));
+      }
+      LedOn(4, g_state.midi_connected != 0);
       return;
     }
 
@@ -721,6 +965,11 @@ class VoderCard : public ComputerCard {
   int32_t formant_cv_;
   int32_t babble_decay_, babble_count_;
   bool babble_open_;
+  int32_t auto_count_, auto_left_, down_held_;
+  int32_t babble_animate_, babble_consonant_;
+  int32_t anim_open_, anim_front_, anim_pitch_;
+  uint32_t auto_rng_;
+  bool auto_chatter_, auto_open_, auto_plosive_;
   bool gate_seen_;
   bool babble_;
   bool diag_use_ext_, diag_gated_;

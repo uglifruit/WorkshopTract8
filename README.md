@@ -192,11 +192,37 @@ even to confirm it.
 Each knob then drives several things at once, so the card talks from a
 single sustained gate with nothing else patched:
 
+**Page 1** (switch middle) is *what is said*:
+
 | Knob | Controls |
 |---|---|
 | **Main** | Vowel diagonal **and** pitch — one sweep walks through vowels, rising as it goes |
 | **X** | Chatter rate **and** brightness — clockwise is faster and brighter |
 | **Y** | Breath **against** rounding — a rounded hum at one end, a breathy whisper at the other |
+
+**Page 2** (switch up) is *who is saying it*:
+
+| Knob | Controls |
+|---|---|
+| **Main** | **Voice size** — pitch, brightness and vowel placement together, from a small bright voice to a large dark one |
+| **X** | **Animation** — how much the voice wanders between syllables, from a monotone to muttering |
+| **Y** | **Consonants** — how many syllables get a plosive, and how loud, from legato to heavily articulated |
+
+Set a voice on page 2, then play it on page 1.
+
+### Auto-chatter
+
+**Hold the momentary switch down for two seconds** and the card starts
+talking by itself — no gate needed. The LEDs fill as a progress bar while
+you hold, so you can see the gesture land. **Tap the switch to stop.**
+
+It generates phrases rather than an even stream: 2–7 syllables of differing
+lengths, then a pause long enough to read as taking a breath. Some syllables
+get a consonant, most do not. LED 5 pulses with each syllable so the panel
+shows it is running.
+
+Deliberately asymmetric — starting something that then plays by itself takes
+effort, stopping it does not.
 
 Hold a gate on either pulse input and it chatters by itself, 2 Hz to 20 Hz
 across Knob X. Each syllable is voiced for the first third of its period, so
