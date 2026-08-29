@@ -60,6 +60,19 @@ static constexpr int32_t kBootSplash = 36000;
 // at 48 kHz.
 static constexpr int32_t kPanelDiv = 3;
 
+// Default click level with no 8mu attached, Q15. About -14 dB.
+//
+// The click is a broadband burst summed AFTER the filter bank, so it is
+// never attenuated by the vowel the way everything else is - at full scale
+// it dominates the card completely, which is how it shipped and how it was
+// reported. This sits it under the voice as punctuation. Fader 6 reaches
+// full for when a loud one is wanted.
+static constexpr int32_t kDefaultClickLevel = 6500;
+
+// Default click decay with no 8mu attached, Q15. Short - a consonant, not
+// a wash. Maps to roughly 30 ms through the squared curve in voder.cpp.
+static constexpr int32_t kDefaultClickDecay = 6000;
+
 // Vowel morph recompute interval, samples. 384 samples is 125 Hz - far
 // faster than a hand can turn a knob, and it takes the morph from roughly
 // a quarter of the ISR budget down to under one percent. See ReadPanel().
@@ -98,6 +111,7 @@ class VoderCard : public ComputerCard {
     panel_breath_ = 0;
     panel_pitch_ = 8000;
     panel_bright_ = 16384;
+    panel_round_ = 0;        // spread; the unrounded vowels
 
     last_plosive_ = 0;
     last_pulse1_ = false;
@@ -149,6 +163,22 @@ class VoderCard : public ComputerCard {
     }
   }
 
+  // True when the 8mu is present AND has actually sent this control.
+  //
+  // Both halves matter. The flag alone latches forever, so unplugging the
+  // controller used to leave the panel dead for the rest of the session -
+  // the knobs did nothing and there was no way to get them back without a
+  // power cycle. Requiring midi_connected as well hands every control back
+  // to the panel the moment the cable comes out, which is the only
+  // behaviour that makes sense: the card must always be playable from its
+  // own front panel.
+  //
+  // The flag is still needed alongside it, so that an 8mu sitting plugged
+  // in but untouched does not seize a knob the player has a hand on.
+  bool __not_in_flash_func(MidiOwns)(uint8_t flag) const {
+    return g_state.midi_connected && flag;
+  }
+
   virtual void __not_in_flash_func(ProcessSample)() override {
     const uint32_t t_start = time_us_32();
 
@@ -187,7 +217,7 @@ class VoderCard : public ComputerCard {
     // Then 1V/oct from CV In 1 on top, so the card still tracks a keyboard
     // whichever control set the base note.
     const int32_t pitch_src =
-        g_state.pitch_from_midi ? g_state.pitch : panel_pitch_;
+        MidiOwns(g_state.pitch_from_midi) ? g_state.pitch : panel_pitch_;
     int32_t f0 = kF0MinMilliHz +
                  (int32_t)(((int64_t)pitch_src *
                             (kF0MaxMilliHz - kF0MinMilliHz)) >> 15);
@@ -204,7 +234,7 @@ class VoderCard : public ComputerCard {
     // wherever the fader is parked - press one over a voiced sound and it
     // turns breathy without losing the pitch. Both buttons together give
     // twice as much, which is the obvious reading of holding both.
-    int32_t breath = g_state.breath_from_midi ? g_state.breath : panel_breath_;
+    int32_t breath = MidiOwns(g_state.breath_from_midi) ? g_state.breath : panel_breath_;
 
     if (g_state.breath_button_a) breath += kButtonBreath;
     if (g_state.breath_button_d) breath += kButtonBreath;
@@ -240,16 +270,25 @@ class VoderCard : public ComputerCard {
 
     // Click level and decay.
     //
-    // BOTH DEFAULT TO FULL WITHOUT AN 8MU. The panel has no knobs free for
-    // them, so with no controller attached the click must be at full level
-    // and full sustain - otherwise the plosive inputs on the panel, and
-    // the switch-down key, would be quiet or clipped short with no way to
-    // turn them up. A card that is quieter on its own than with a
-    // controller plugged in would be exactly backwards.
+    // The panel has no knobs free for these, so the default is what the
+    // switch-down key and Pulse In 1 get. It was full scale, and reported
+    // as far too loud - which it was: the click is a broadband noise burst
+    // summed AFTER the filter bank, so unlike everything else on the card
+    // it is never attenuated by a vowel. At full it simply dominates.
+    //
+    // kDefaultClickLevel is about -14 dB, which sits it under the voice as
+    // punctuation rather than over it as percussion. Fader 6 still reaches
+    // full for when a loud click is wanted.
     p.click_level =
-        g_state.click_level_from_midi ? g_state.click_level : 32767;
+        MidiOwns(g_state.click_level_from_midi) ? g_state.click_level
+                                                : kDefaultClickLevel;
+
+    // Decay defaults short, not long. A full-length default made every
+    // panel trigger a one-second noise wash; a consonant-length click is
+    // what a plosive input should give you before anyone touches a fader.
     p.click_decay =
-        g_state.click_decay_from_midi ? g_state.click_decay : 32767;
+        MidiOwns(g_state.click_decay_from_midi) ? g_state.click_decay
+                                                : kDefaultClickDecay;
 
     // Audio In 1 is an EXTERNAL EXCITER, summed with the internal buzz
     // and noise inside the engine.
@@ -312,7 +351,7 @@ class VoderCard : public ComputerCard {
     // phrase without needing the patch to control absolute level. With no
     // 8mu the base is full, so a negative CV ducks from full and a
     // positive one is simply already at the ceiling.
-    int32_t vol = g_state.volume_from_midi ? g_state.volume : 32767;
+    int32_t vol = MidiOwns(g_state.volume_from_midi) ? g_state.volume : 32767;
     if (Connected(Input::Audio2)) {
       vol += (int32_t)AudioIn2() << 4;
     }
@@ -418,24 +457,29 @@ class VoderCard : public ComputerCard {
 
     const Switch sw = SwitchVal();
 
-    // The panel mirrors the 8mu, one knob per page:
+    // Every knob does something on every page, and between the two pages
+    // the panel reaches EVERY parameter the 8mu can:
     //
-    //   Middle/Down   Knob1 OPENNESS   Knob2 FRONT     Knob3 BREATH
-    //   Up            Knob1 PITCH      Knob2 BRIGHT    Knob3 BREATH
+    //   Middle/Down   Knob1 OPENNESS   Knob2 FRONT      Knob3 BREATH
+    //   Up            Knob1 PITCH      Knob2 BRIGHT     Knob3 ROUNDING
     //
-    // Each control is taken from the 8mu instead once that fader has
-    // actually been moved. The takeover is per-control and one-way, so a
-    // controller sitting plugged in but untouched never seizes a knob the
-    // player has a hand on, and moving one fader does not disable the
-    // other knobs.
+    // Knob 3 used to be breath on both pages, which wasted a slot and left
+    // ROUNDING - the third vowel axis - reachable only from an 8mu tilt.
+    // Without a controller a whole dimension of the vowel cube was simply
+    // missing, including the rounded vowels that dimension exists for.
+    //
+    // The card must be fully playable from its own front panel, both
+    // because not everyone has an 8mu and because the controller can be
+    // unplugged mid-session - see MidiOwns().
     if (sw == Switch::Up) {
       panel_pitch_ = knob_main_;
       panel_bright_ = knob_x_;
+      panel_round_ = knob_y_;
     } else {
       panel_openness_ = knob_main_;
       panel_front_ = knob_x_;
+      panel_breath_ = knob_y_;
     }
-    panel_breath_ = knob_y_;
 
     // Frozen formants ignore the vowel controls entirely.
     if (g_state.freeze) return;
@@ -450,9 +494,9 @@ class VoderCard : public ComputerCard {
     morph_phase_ = 0;
 
     int32_t openness =
-        g_state.openness_from_midi ? g_state.openness : panel_openness_;
+        MidiOwns(g_state.openness_from_midi) ? g_state.openness : panel_openness_;
     int32_t front =
-        g_state.front_from_midi ? g_state.front : panel_front_;
+        MidiOwns(g_state.front_from_midi) ? g_state.front : panel_front_;
 
     // The formant CV moves openness up as front moves down. Sweeping both
     // together along one axis would mostly travel between two corners of
@@ -477,7 +521,8 @@ class VoderCard : public ComputerCard {
     // panel has no knob free for it, so with no controller attached the
     // card stays on the spread face of the cube - which is where the
     // ordinary unrounded vowels live, so nothing is lost.
-    const int32_t round_amt = g_state.round_from_midi ? g_state.round : 0;
+    const int32_t round_amt =
+        MidiOwns(g_state.round_from_midi) ? g_state.round : panel_round_;
 
     // Three axes, eight corner vowels, trilinear between them. vowels.h.
     int32_t gains[kNumBands];
@@ -488,12 +533,17 @@ class VoderCard : public ComputerCard {
     // full scale - the additive version could do both, depending on the
     // vowel, and a band pinned at zero is a hole no control can reopen.
     const int32_t bright =
-        g_state.bright_from_midi ? g_state.bright : panel_bright_;
+        MidiOwns(g_state.bright_from_midi) ? g_state.bright : panel_bright_;
     const int32_t tilt = bright - 16384;
 
     for (int i = 0; i < kNumBands; i++) {
       const int32_t pos = (i * 2) - 7;  // -7 .. +7
-      int32_t factor = 32768 + (int32_t)(((int64_t)tilt * pos) >> 4);
+      // >>3, not >>4. At >>4 the brightness knob moved the spectrum only
+      // 2.5 dB across its whole travel, which is not enough to feel like a
+      // control; >>3 gives 5.2 dB with still no band pinned at either
+      // extreme for any vowel. >>2 reaches 13.8 dB but starts overwhelming
+      // the vowel itself, which is the opposite of a tone control.
+      int32_t factor = 32768 + (int32_t)(((int64_t)tilt * pos) >> 3);
       if (factor < 0) factor = 0;
       int32_t g = (int32_t)(((int64_t)gains[i] * factor) >> 15);
       g_state.band_gain[i] = Clamp15(g);
@@ -565,7 +615,7 @@ class VoderCard : public ComputerCard {
   bool diag_use_ext_, diag_gated_;
   int32_t knob_main_, knob_x_, knob_y_;
   int32_t panel_openness_, panel_front_, panel_breath_;
-  int32_t panel_pitch_, panel_bright_;
+  int32_t panel_pitch_, panel_bright_, panel_round_;
   uint32_t last_plosive_;
   bool last_pulse1_;
   uint32_t load_acc_;

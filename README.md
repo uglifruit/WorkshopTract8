@@ -113,11 +113,15 @@ move it — an 8mu plugged in but untouched never seizes a knob your hand is on.
 | Switch | Knob 1 (Main) | Knob 2 (X) | Knob 3 (Y) |
 |---|---|---|---|
 | **Middle / Down** | Openness | Front | Breath |
-| **Up** | Pitch | Brightness | Breath |
+| **Up** | Pitch | Brightness | Rounding |
 
-Rounding is 8mu-only — the panel has no knob free for it, so without a
-controller the card stays on the spread face of the cube, where the ordinary
-unrounded vowels live.
+Between the two pages the panel reaches **every** parameter the 8mu can, so
+the card is fully playable on its own.
+
+**Unplug the 8mu and the knobs take over again.** Each control follows the
+controller only while it is connected *and* has actually been moved — so an
+idle 8mu never seizes a knob under your hand, and pulling the cable
+mid-session hands everything straight back to the panel.
 
 Switch **Down** also fires a plosive on each flick — the nearest the panel has
 to a stop key.

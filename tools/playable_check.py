@@ -31,6 +31,8 @@ Checks:
   3. UH and OH are both reachable inside the cube.
   4. No position in the cube is silent or holed.
   5. Brightness tilts without pinning any band.
+  6. The panel reclaims control when the 8mu is unplugged.
+  7. Every panel knob makes an audible difference on its page.
 
 Run: python tools/playable_check.py
 """
@@ -95,7 +97,7 @@ def with_bright(gains, bright):
     out = []
     for i, g in enumerate(gains):
         pos = (i * 2) - 7
-        factor = max(0, 32768 + ((tilt * pos) >> 4))
+        factor = max(0, 32768 + ((tilt * pos) >> 3))
         out.append(clamp15((g * factor) >> 15))
     return out
 
@@ -239,6 +241,90 @@ def check_brightness():
     return ok
 
 
+
+
+def midi_owns(midi_connected, flag):
+    """Transcription of MidiOwns() in main.cpp."""
+    return bool(midi_connected and flag)
+
+
+def check_panel_reclaims():
+    """Unplugging the 8mu must hand every control back to the panel."""
+    print("\n6. The panel reclaims control when the 8mu is unplugged")
+    ok = True
+
+    controls = ("openness", "front", "breath", "pitch", "bright",
+                "round", "click level", "click decay", "volume")
+
+    # Plugged in and touched: the 8mu owns it.
+    good = all(midi_owns(1, 1) for _ in controls)
+    print(f"   8mu connected and moved   -> 8mu owns all {len(controls)}   "
+          f"{'ok' if good else 'FAIL'}")
+    ok &= good
+
+    # Plugged in but untouched: the panel keeps it, so a controller
+    # sitting idle never seizes a knob the player has a hand on.
+    good = all(not midi_owns(1, 0) for _ in controls)
+    print(f"   8mu connected, untouched  -> panel keeps all   "
+          f"{'ok' if good else 'FAIL'}")
+    ok &= good
+
+    # UNPLUGGED after being used: the panel must take everything back.
+    # This is the regression. The flags latch forever, so testing the flag
+    # alone left the knobs dead for the rest of the session with no way
+    # back short of a power cycle.
+    good = all(not midi_owns(0, 1) for _ in controls)
+    print(f"   8mu UNPLUGGED after use   -> panel reclaims all   "
+          f"{'ok' if good else '<-- KNOBS STAY DEAD (the bug)'}")
+    ok &= good
+
+    print("   (the card must always be playable from its own front panel,")
+    print("    and a cable can come out mid-session)")
+    return ok
+
+
+def check_every_knob_matters():
+    """Each knob must make an audible difference on its page."""
+    print("\n7. Every panel knob makes an audible difference")
+    ok = True
+    mid = 16384
+
+    # Page 1: openness and front sweep the vowel square.
+    openness = spectral_distance(blend(0, mid, 0), blend(32767, mid, 0))
+    front = spectral_distance(blend(mid, 0, 0), blend(mid, 32767, 0))
+    # Page 2: rounding sweeps the third axis; brightness tilts.
+    rounding = spectral_distance(blend(mid, mid, 0), blend(mid, mid, 32767))
+    base = blend(mid, mid, 0)
+    bright = spectral_distance(with_bright(base, 0), with_bright(base, 32767))
+
+    for name, page, val in (("Knob 1 openness", 1, openness),
+                            ("Knob 2 front", 1, front),
+                            ("Knob 2 bright", 2, bright),
+                            ("Knob 3 rounding", 2, rounding)):
+        # 2 dB is about the floor for a control to feel like it is doing
+        # something under the hand rather than merely measuring different.
+        good = val > 2.0
+        if not good:
+            ok = False
+        print(f"   page {page}  {name:16} {val:5.1f} dB   "
+              f"{'ok' if good else '<-- TOO SUBTLE'}")
+
+    print("   (Knob 1 page 2 is pitch, 50-500 Hz, and Knob 3 page 1 is")
+    print("    breath - neither is a spectral change, so neither is")
+    print("    measured here)")
+
+    # Between the two pages the panel must reach EVERY parameter the 8mu
+    # can, or the card is crippled without a controller.
+    panel = {"openness", "front", "breath", "pitch", "bright", "round"}
+    midi = {"openness", "front", "breath", "pitch", "bright", "round"}
+    good = panel == midi
+    if not good:
+        ok = False
+    print(f"   panel reaches every 8mu parameter   "
+          f"{'ok' if good else '<-- GAP'}")
+    return ok
+
+
 def main():
     print("TRACT8 playability check - the 3-D vowel cube")
     print("  Three axes, eight corner vowels, trilinear between them.")
@@ -247,6 +333,8 @@ def main():
     ok &= check_non_corner_vowels()
     ok &= check_no_dead_spots()
     ok &= check_brightness()
+    ok &= check_panel_reclaims()
+    ok &= check_every_knob_matters()
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1
 

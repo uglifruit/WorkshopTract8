@@ -3,7 +3,7 @@ Name: TRACT8
 Description: An eight-band Voder - the 1939 Bell Labs talking machine - played by hand from a Music Thing 8mu over USB MIDI Host, one fader per formant band, or from the card's own knobs.
 Language: C++ (ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: "1.9.0"
+Version: "1.10.0"
 Status: Working on hardware
 License: MIT
 repository: https://github.com/uglifruit/WorkshopTract8
@@ -26,7 +26,7 @@ contact:
 
 uf2:
   - path: UF2/tract8.uf2
-    name: TRACT8 1.9.0
+    name: TRACT8 1.10.0
 
 tags:
   - synth
@@ -191,11 +191,14 @@ controls:
         name: PITCH
         description: Base F0 for the buzz oscillator, 50 to 500 Hz.
       x:
-        name: (unused)
-        description: Reserved.
+        name: BRIGHTNESS
+        description: Spectral tilt, shading the vowel darker or brighter.
       y:
-        name: SOURCE
-        description: Source mix, as on the other page.
+        name: ROUNDING
+        description: >
+          The third vowel axis - lip rounding, toward the OO corner of the
+          cube. Between the two pages the panel reaches every parameter the
+          8mu can.
   leds:
     - when: "Running"
       display: list
