@@ -12,6 +12,20 @@
 //   usb_core1.cpp Core 1 USB host pump
 //   main.cpp      panel, CV, LEDs, core scheduling
 //
+// Jacks:
+//   Audio In 1   breath   CV, adds to the fader
+//   Audio In 2   volume   CV, adds to the fader
+//   CV In 1      pitch    1V/oct
+//   CV In 2      formant  bipolar, sweeps the vowel cube diagonally
+//   Pulse In 1   click    trigger
+//   Pulse In 2   glottal  gate
+//
+// All four CV inputs ADD to whatever the panel or the 8mu has set, rather
+// than replacing it. That is what makes the card useful fed from random
+// voltages: a slow random into CV 2 wanders the vowel around wherever the
+// controls are parked, and gates into the pulses chatter it, without ever
+// needing the patch to supply a sensible absolute value.
+//
 // The Voder's controls map onto this card as:
 //   wrist bar (buzz/hiss)  -> notes C2/C3, Knob 3, Pulse In 2
 //   foot pedal (pitch)     -> accelerometer CC 42/43, CV In 1, Knob 1 page 2
@@ -45,15 +59,6 @@ static constexpr int32_t kBootSplash = 36000;
 // third of an ADC read per sample instead of three, and knobs do not move
 // at 48 kHz.
 static constexpr int32_t kPanelDiv = 3;
-
-// External-input detection. A patched signal must exceed this ADC level
-// (about 1.5% of full scale, well above the converter's noise floor) to
-// take over from the internal excitation, and the takeover is then held for
-// kExtHoldSamples so a waveform's zero crossings do not chatter it on and
-// off. 4800 samples is 100 ms - longer than the gap between zero crossings
-// of anything above 10 Hz.
-static constexpr int32_t kExtGateLevel = 30;
-static constexpr int32_t kExtHoldSamples = 4800;
 
 // Vowel morph recompute interval, samples. 384 samples is 125 Hz - far
 // faster than a hand can turn a knob, and it takes the morph from roughly
@@ -101,7 +106,7 @@ class VoderCard : public ComputerCard {
     load_out_ = 0;
     led_phase_ = 0;
     energy_smooth_ = 0;
-    ext_hold_ = 0;
+    formant_cv_ = 0;
     gate_seen_ = false;
     diag_use_ext_ = false;
     diag_gated_ = false;
@@ -193,13 +198,23 @@ class VoderCard : public ComputerCard {
     p.f0_milli_hz = f0;
 
     // Breath: fader 3 if the 8mu has sent it, otherwise Knob 3, plus
-    // whatever buttons A and D are adding while held.
+    // Audio In 1 as a CV, plus whatever buttons A and D are adding.
     //
     // The buttons ADD rather than set, so they are a gesture on top of
     // wherever the fader is parked - press one over a voiced sound and it
     // turns breathy without losing the pitch. Both buttons together give
     // twice as much, which is the obvious reading of holding both.
     int32_t breath = g_state.breath_from_midi ? g_state.breath : panel_breath_;
+
+    // Audio In 1 is a breath CV. Bipolar, so a random voltage pushes the
+    // mix either side of where the control is parked: +5 V is fully noisy,
+    // -5 V fully voiced. <<3 takes the +/-2048 input to roughly +/-16384,
+    // half of Q15, which is enough to sweep the whole balance from a
+    // centred control without a full-scale signal.
+    if (Connected(Input::Audio1)) {
+      breath += (int32_t)AudioIn1() << 3;
+    }
+
     if (g_state.breath_button_a) breath += kButtonBreath;
     if (g_state.breath_button_d) breath += kButtonBreath;
     p.source_mix = Clamp15(breath);
@@ -245,25 +260,20 @@ class VoderCard : public ComputerCard {
     p.click_decay =
         g_state.click_decay_from_midi ? g_state.click_decay : 32767;
 
-    // Audio In 1 replaces the internal excitation when patched.
+    // Audio In 1 is the BREATH CV now, not an excitation replacement.
     //
-    // Gated on the signal actually being there, not on the jack alone -
-    // the other half of the silence bug. ComputerCard forces a
-    // disconnected input to zero, so a jack misdetected as connected fed
-    // the filter bank a constant zero and muted the card.
+    // It cannot be both. The old behaviour handed the filter bank whatever
+    // was on the jack whenever the signal exceeded a threshold, so a
+    // breath CV would have silenced the buzz the moment it went positive -
+    // two controls fighting over one jack, with the louder one winning.
     //
-    // Requiring real signal makes the failure safe in the right
-    // direction: a false "connected" now falls back to the internal
-    // sources and the card still speaks. A genuinely patched signal
-    // crosses the threshold within a few samples.
-    const int32_t ain = (int32_t)AudioIn1();
-    if (ain > kExtGateLevel || ain < -kExtGateLevel) {
-      ext_hold_ = kExtHoldSamples;
-    } else if (ext_hold_ > 0) {
-      ext_hold_--;
-    }
-    p.use_ext = ext_hold_ > 0;
-    p.ext_input = p.use_ext ? ain : 0;
+    // The external-excitation feature is not lost so much as relocated:
+    // patch a signal into Audio In 1 and it still shapes the sound, just
+    // by driving the buzz/noise balance rather than by replacing the
+    // source. If a true external exciter is wanted again it needs its own
+    // jack, and there is not one free.
+    p.use_ext = false;
+    p.ext_input = 0;
 
     // --- plosive triggers -------------------------------------------------
     // Counted, not flagged: fire once per increment Core 1 has made since
@@ -301,8 +311,20 @@ class VoderCard : public ComputerCard {
     // and left, but swelling and ducking a phrase is what having the
     // controller in your hands is FOR. Unity until the accelerometer has
     // actually been used, so a card with no 8mu is never quiet.
-    if (g_state.volume_from_midi) {
-      out = (int32_t)(((int64_t)out * g_state.volume) >> 15);
+    // Volume: the 8mu's fader and tilt, plus Audio In 2 as a CV.
+    //
+    // The CV is bipolar and ADDS, so it swells and ducks around whatever
+    // the fader is set to - an envelope into this jack articulates a
+    // phrase without needing the patch to control absolute level. With no
+    // 8mu the base is full, so a negative CV ducks from full and a
+    // positive one is simply already at the ceiling.
+    int32_t vol = g_state.volume_from_midi ? g_state.volume : 32767;
+    if (Connected(Input::Audio2)) {
+      vol += (int32_t)AudioIn2() << 4;
+    }
+    vol = Clamp15(vol);
+    if (vol != 32767) {
+      out = (int32_t)(((int64_t)out * vol) >> 15);
     }
 
     // Upside down is a hard mute. Turning the controller over is an
@@ -433,10 +455,29 @@ class VoderCard : public ComputerCard {
     if (++morph_phase_ < kMorphDiv) return;
     morph_phase_ = 0;
 
-    const int32_t openness =
+    int32_t openness =
         g_state.openness_from_midi ? g_state.openness : panel_openness_;
-    const int32_t front =
+    int32_t front =
         g_state.front_from_midi ? g_state.front : panel_front_;
+
+    // The formant CV moves openness up as front moves down. Sweeping both
+    // together along one axis would mostly travel between two corners of
+    // the cube; opposing them crosses the middle, which is where the
+    // distinct vowels are.
+    if (formant_cv_ != 0) {
+      openness = Clamp15(openness + formant_cv_);
+      front = Clamp15(front - formant_cv_);
+    }
+
+    // CV In 2 is a bipolar FORMANT CV. It sweeps the vowel cube along its
+    // most useful diagonal - openness and front together, in opposite
+    // senses - so one random voltage walks through recognisably different
+    // vowels rather than along one axis of a cube. That is the input to
+    // patch an S&H or a slow random into.
+    //
+    // Added to the existing position rather than replacing it, so the
+    // faders and knobs still set where the sweep is centred.
+    formant_cv_ = Connected(Input::CV2) ? ((int32_t)CVIn2() << 3) : 0;
 
     // Rounding: the third vowel axis, from the 8mu left/right tilt. The
     // panel has no knob free for it, so with no controller attached the
@@ -525,7 +566,7 @@ class VoderCard : public ComputerCard {
 
   int32_t boot_mute_, boot_splash_;
   int32_t panel_phase_, morph_phase_;
-  int32_t ext_hold_;
+  int32_t formant_cv_;
   bool gate_seen_;
   bool diag_use_ext_, diag_gated_;
   int32_t knob_main_, knob_x_, knob_y_;

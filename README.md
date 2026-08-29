@@ -130,15 +130,44 @@ under your hand.
 
 | Jack | Function |
 |---|---|
-| Audio In 1 | External excitation — replaces buzz and hiss when patched |
-| CV In 1 | 1V/oct F0 |
-| Pulse In 1 | Plosive trigger |
-| Pulse In 2 | Glottal gate |
+| Audio In 1 | **Breath CV** — buzz ↔ noise, adds to the control |
+| Audio In 2 | **Volume CV** — swells and ducks around the base level |
+| CV In 1 | **Pitch**, 1V/oct |
+| CV In 2 | **Formant CV**, bipolar — sweeps the vowel cube diagonally |
+| Pulse In 1 | **Click** trigger |
+| Pulse In 2 | **Glottal gate** |
 | Audio Out 1 / 2 | Mono output, same signal on both |
 | CV Out 1 | Formant energy envelope |
 | CV Out 2 | Measured DSP load |
 | Pulse Out 1 | High while voiced |
 | Pulse Out 2 | High while frozen |
+
+### Feeding it random voltages
+
+The card is built to babble. **Every CV adds to its control rather than
+replacing it**, so a random voltage wanders the sound around wherever the
+knobs and faders are parked — the patch never has to supply a sensible
+absolute value, and nothing goes dead when a cable goes in.
+
+**CV In 2 is the one to reach for first.** It moves openness up as front
+moves down, sweeping the vowel cube along its diagonal, which crosses the
+middle where the distinct vowels live. A sample-and-hold here walks through
+recognisably different vowels; sweeping a single axis instead would mostly
+travel between two corners. Measured: the diagonal spans 17 dB against
+10 dB for one axis alone.
+
+**Gates chatter without clicking.** The glottal ramp is 2 ms, so Pulse In 2
+opens fully up to about 200 Hz and above that degrades into amplitude
+modulation rather than into clicks — a usable texture rather than a fault.
+Pulse In 1 retriggers the click on every rising edge, so a fast gate stream
+stutters it.
+
+A good first patch for this: slow random into CV In 2, a clock divided a few
+ways into both pulse inputs, and an envelope into Audio In 2.
+
+**Note:** Audio In 1 no longer replaces the internal excitation — it is the
+breath CV now. One jack cannot do both, since a breath voltage would have
+silenced the buzz the moment it went positive.
 
 ### LEDs
 

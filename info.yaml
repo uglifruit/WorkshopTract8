@@ -3,7 +3,7 @@ Name: TRACT8
 Description: An eight-band Voder - the 1939 Bell Labs talking machine - played by hand from a Music Thing 8mu over USB MIDI Host, one fader per formant band, or from the card's own knobs.
 Language: C++ (ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: "1.7.0"
+Version: "1.8.0"
 Status: Working on hardware
 License: MIT
 repository: https://github.com/uglifruit/WorkshopTract8
@@ -26,7 +26,7 @@ contact:
 
 uf2:
   - path: UF2/tract8.uf2
-    name: TRACT8 1.7.0
+    name: TRACT8 1.8.0
 
 tags:
   - synth
@@ -100,27 +100,41 @@ summary: |
 panel:
   inputs:
     - id: AudioIn1
-      name: Excite
-      type: audio
+      name: Breath
+      type: cv
       description: >
-        External excitation. When patched, replaces the internal buzz and
-        noise entirely, making the card an eight-band formant filter.
+        Bipolar CV over the buzz-to-noise balance, added to whatever the
+        fader or knob has set.
+    - id: AudioIn2
+      name: Volume
+      type: cv
+      description: >
+        Bipolar CV over the output level, swelling and ducking around the
+        base level rather than replacing it - an envelope here articulates
+        a phrase without controlling absolute level.
     - id: CVIn1
       name: Pitch
       type: cv
       description: 1V/oct control of the buzz oscillator's F0.
+    - id: CVIn2
+      name: Formant
+      type: cv
+      description: >
+        Bipolar CV that sweeps the vowel cube along its diagonal, opening
+        the mouth as the tongue moves back. One random voltage here walks
+        through recognisably different vowels.
     - id: PulseIn1
-      name: Plosive
+      name: Click
       type: pulse
       description: >
-        Fires a plosive consonant burst on the rising edge - the Voder's
-        stop keys.
+        Fires a plosive burst on the rising edge, retriggering, so a fast
+        gate stream stutters it.
     - id: PulseIn2
       name: Gate
       type: pulse
       description: >
-        Glottal gate. Opens both excitation sources while high. Ignored
-        when the 8mu's gate buttons are in use.
+        Glottal gate. Opens fully up to about 200 Hz and above that becomes
+        amplitude modulation rather than clicking.
   outputs:
     - id: AudioOut1
       name: Out
