@@ -44,9 +44,13 @@ back.
 Checks:
   1. A LEVEL device is at full volume when the fader is up.
   2. The fader alone is a working volume control.
-  3. Lifting back ducks; lifting front swells. Both reach the ends.
+  3. Lifting the front ducks; lifting the back swells.
   4. The tilt curve is gentle near level and steep at a real lift.
   5. Rounding is unrounded when level and rounded at either lift.
+  6. The click defaults to FULL level and length without an 8mu.
+  7. Fader 6 sets the click level.
+  8. Fader 2 sets the click decay, from a short hit to a steady tone.
+  9. The volume tilt is inverted: lifting the back swells.
 
 Run: python tools/gesture_check.py
 """
@@ -54,6 +58,8 @@ Run: python tools/gesture_check.py
 import sys
 import math
 
+CC_CLICK_DECAY = 35   # fader 2
+CC_CLICK_LEVEL = 39   # fader 6
 CC_VOLUME = 40        # fader 7 - base volume
 CC_LIFT_FRONT = 42
 CC_LIFT_BACK = 43
@@ -74,6 +80,12 @@ class Firmware:
         self.volume = 32767
         self.round = 0
         self.freeze = 0
+        # Both default full: with no 8mu the panel's plosive inputs must
+        # be at full level and full length, since no knob controls them.
+        self.click_level = 32767
+        self.click_decay = 32767
+        self.click_level_from_midi = 0
+        self.click_decay_from_midi = 0
 
     @staticmethod
     def _tilt_signed(a, b):
@@ -83,8 +95,10 @@ class Firmware:
         return -q if d < 0 else q
 
     def _update_volume(self):
+        # back minus front: lifting the back swells. See midi8mu.cpp.
         v = self.vol_fader + (
-            (self._tilt_signed(self.front, self.back) * TILT_VOLUME_RANGE) >> 15)
+            (self._tilt_signed(self.back, self.front) * TILT_VOLUME_RANGE)
+            >> 15)
         self.volume = max(0, min(32767, v))
 
     def _update_round(self):
@@ -92,7 +106,13 @@ class Firmware:
         self.round = abs(t)
 
     def cc(self, cc, v):
-        if cc == CC_VOLUME:
+        if cc == CC_CLICK_LEVEL:
+            self.click_level = v << 8
+            self.click_level_from_midi = 1
+        elif cc == CC_CLICK_DECAY:
+            self.click_decay = v << 8
+            self.click_decay_from_midi = 1
+        elif cc == CC_VOLUME:
             self.vol_fader = v << 8
             self._update_volume()
         elif cc == CC_LIFT_FRONT:
@@ -164,29 +184,29 @@ def check_fader():
 
 
 def check_tilt_swings():
-    print("\n3. Lifting back ducks, lifting front swells")
+    print("\n3. Lifting the front ducks, lifting the back swells")
     ok = True
 
-    # From the top, lifting back must reach silence.
+    # From the top, lifting the FRONT must reach silence.
     f = Firmware()
     f.cc(CC_VOLUME, 127)
-    f.cc(CC_LIFT_BACK, 127)
+    f.cc(CC_LIFT_FRONT, 127)
     good = f.volume < 500
-    print(f"   fader full, back lifted   -> {f.volume:5d}   "
+    print(f"   fader full, front lifted  -> {f.volume:5d}   "
           f"{'ok - silent' if good else '<-- CANNOT DUCK'}")
     ok &= good
 
     # From half, both directions must reach the ends.
     f = Firmware()
     f.cc(CC_VOLUME, 64)
-    f.cc(CC_LIFT_FRONT, 127)
+    f.cc(CC_LIFT_BACK, 127)
     up = f.volume
     f2 = Firmware()
     f2.cc(CC_VOLUME, 64)
-    f2.cc(CC_LIFT_BACK, 127)
+    f2.cc(CC_LIFT_FRONT, 127)
     down = f2.volume
     good = up > 32000 and down < 500
-    print(f"   fader half: front {up:5d}, back {down:5d}   "
+    print(f"   fader half: back {up:5d}, front {down:5d}   "
           f"{'ok - full swing both ways' if good else '<-- LIMITED'}")
     ok &= good
     print("   (this is the expressive part: the fader sets where the")
@@ -197,17 +217,17 @@ def check_tilt_swings():
 def check_tilt_curve():
     print("\n4. The tilt curve is gentle near level")
     ok = True
-    print("   lift back   volume      dB")
+    print("   lift front  volume      dB")
     for b in (0, 16, 32, 64, 96, 127):
         f = Firmware()
         f.cc(CC_VOLUME, 127)
-        f.cc(CC_LIFT_BACK, b)
+        f.cc(CC_LIFT_FRONT, b)
         print(f"      {b:3d}       {f.volume:5d}   {db(f.volume):6.1f}")
 
     # A small unintended lift must not cost real level.
     f = Firmware()
     f.cc(CC_VOLUME, 127)
-    f.cc(CC_LIFT_BACK, 32)
+    f.cc(CC_LIFT_FRONT, 32)
     d = db(f.volume)
     good = d > -1.5
     if not good:
@@ -251,14 +271,128 @@ def check_round():
     return ok
 
 
+
+
+PLOSIVE_MIN = 384
+PLOSIVE_MAX = 48000
+
+
+def decay_samples(q15):
+    sq = (q15 * q15) >> 15
+    return PLOSIVE_MIN + (((PLOSIVE_MAX - PLOSIVE_MIN) * sq) >> 15)
+
+
+def check_click_defaults():
+    """With no 8mu the click must be FULL, not quiet or clipped short."""
+    print("\n6. Click defaults to full without an 8mu")
+    ok = True
+    f = Firmware()
+    good = f.click_level == 32767 and f.click_level_from_midi == 0
+    print(f"   level  {f.click_level:5d}, from_midi {f.click_level_from_midi}   "
+          f"{'ok - full' if good else '<-- QUIET WITHOUT A CONTROLLER'}")
+    ok &= good
+
+    good = f.click_decay == 32767 and f.click_decay_from_midi == 0
+    ms = decay_samples(f.click_decay) / 48.0
+    print(f"   decay  {f.click_decay:5d} = {ms:.0f} ms   "
+          f"{'ok - full length' if good else '<-- CLIPPED SHORT'}")
+    ok &= good
+    print("   (the panel has no knob for either, so a card on its own must")
+    print("    not be quieter than one with a controller plugged in)")
+    return ok
+
+
+def check_click_level():
+    print("\n7. Fader 6 sets the click level")
+    ok = True
+    prev = None
+    monotonic = True
+    for cc in (0, 32, 64, 96, 127):
+        f = Firmware()
+        f.cc(CC_CLICK_LEVEL, cc)
+        if prev is not None and f.click_level < prev:
+            monotonic = False
+        prev = f.click_level
+        print(f"   cc {cc:3d} -> level {f.click_level:5d}  "
+              f"{db(f.click_level):6.1f} dB")
+    lo = Firmware()
+    lo.cc(CC_CLICK_LEVEL, 0)
+    hi = Firmware()
+    hi.cc(CC_CLICK_LEVEL, 127)
+    good = lo.click_level == 0 and hi.click_level > 32000 and monotonic
+    if not good:
+        ok = False
+    print(f"   silent at 0, full at 127, monotonic   "
+          f"{'ok' if good else 'FAIL'}")
+    return ok
+
+
+def check_click_decay():
+    print("\n8. Fader 2 sets the click decay, short hit to steady tone")
+    ok = True
+    for cc in (0, 32, 64, 96, 127):
+        f = Firmware()
+        f.cc(CC_CLICK_DECAY, cc)
+        ms = decay_samples(f.click_decay) / 48.0
+        print(f"   cc {cc:3d} -> {ms:8.1f} ms")
+
+    lo = Firmware()
+    lo.cc(CC_CLICK_DECAY, 0)
+    hi = Firmware()
+    hi.cc(CC_CLICK_DECAY, 127)
+    lo_ms = decay_samples(lo.click_decay) / 48.0
+    hi_ms = decay_samples(hi.click_decay) / 48.0
+    good = lo_ms < 15 and hi_ms > 900
+    if not good:
+        ok = False
+    print(f"   {lo_ms:.0f} ms to {hi_ms:.0f} ms   "
+          f"{'ok - consonant to sustained' if good else 'FAIL'}")
+
+    # The short end must get most of the travel: that is where the useful
+    # consonant lengths live, and a linear map would waste the fader on
+    # the difference between 800 ms and 900 ms.
+    mid = Firmware()
+    mid.cc(CC_CLICK_DECAY, 64)
+    mid_ms = decay_samples(mid.click_decay) / 48.0
+    good = mid_ms < hi_ms / 2
+    if not good:
+        ok = False
+    print(f"   halfway is {mid_ms:.0f} ms, well under half of {hi_ms:.0f}   "
+          f"{'ok - short end has the travel' if good else 'FAIL'}")
+    return ok
+
+
+def check_volume_inverted():
+    """Lifting the BACK must swell, not duck."""
+    print("\n9. Volume tilt is inverted: lifting the back swells")
+    ok = True
+    f = Firmware()
+    f.cc(CC_VOLUME, 64)
+    f.cc(CC_LIFT_BACK, 127)
+    back = f.volume
+    f2 = Firmware()
+    f2.cc(CC_VOLUME, 64)
+    f2.cc(CC_LIFT_FRONT, 127)
+    front = f2.volume
+    good = back > 32000 and front < 500
+    print(f"   from half: back lifted {back:5d}, front lifted {front:5d}   "
+          f"{'ok - back swells' if good else '<-- NOT INVERTED'}")
+    ok &= good
+    return ok
+
+
 def main():
-    print("TRACT8 8mu accelerometer check")
+    print("TRACT8 8mu accelerometer and click check")
     print("  LIFT gestures: 0 when level, rising as a side is lifted.")
     ok = check_level_is_full()
     ok &= check_fader()
     ok &= check_tilt_swings()
     ok &= check_tilt_curve()
     ok &= check_round()
+    ok &= check_click_defaults()
+    ok &= check_click_level()
+    ok &= check_click_decay()
+    ok &= check_volume_inverted()
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1
 

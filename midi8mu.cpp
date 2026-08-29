@@ -71,8 +71,12 @@ static int32_t TiltSigned(int32_t a, int32_t b) {
 // It does not: it rests at 0, so full volume happened only at a specific
 // half-lifted angle and the level position was silent.
 static void UpdateVolume() {
+  // BACK minus FRONT, not the other way round: lifting the back swells
+  // and lifting the front ducks. Inverted here rather than by swapping the
+  // CC constants, so the names keep telling the truth about which physical
+  // gesture is which.
   int32_t v = s_vol_fader +
-              ((TiltSigned(s_lift_front, s_lift_back) * kTiltVolumeRange) >>
+              ((TiltSigned(s_lift_back, s_lift_front) * kTiltVolumeRange) >>
                15);
   if (v < 0) v = 0;
   if (v > 32767) v = 32767;
@@ -116,6 +120,16 @@ static void HandleCc(uint8_t cc, uint8_t v) {
     case kCcPitch:
       g_state.pitch = CcToQ15(v);
       g_state.pitch_from_midi = 1;
+      return;
+
+    case kCcClickDecay:
+      g_state.click_decay = CcToQ15(v);
+      g_state.click_decay_from_midi = 1;
+      return;
+
+    case kCcClickLevel:
+      g_state.click_level = CcToQ15(v);
+      g_state.click_level_from_midi = 1;
       return;
 
     case kCcBright:
@@ -167,6 +181,7 @@ static void HandleNoteOn(uint8_t note, uint8_t vel) {
   // A note-on with velocity 0 is the running-status note-off.
   if (vel == 0) {
     if (note == kNoteVoiced) {
+      g_state.click_gate = 0;
       g_state.gate_voiced = 0;
       g_state.breath_button_a = 0;
     } else if (note == kNoteNoise) {
@@ -180,9 +195,14 @@ static void HandleNoteOn(uint8_t note, uint8_t vel) {
 
   switch (note) {
     case kNoteVoiced:
+      // Button 1 is the TRIGGER. It fires the click and holds it open for
+      // as long as it is held, so the card can be played percussively -
+      // short taps at a short decay setting, sustained tones at a long
+      // one. It still opens the voiced gate, so the buzz sounds through
+      // it, and still adds breath.
+      g_state.click_gate = 1;
+      g_state.plosive_count++;
       g_state.gate_voiced = 1;
-      // Adds breath while held. The button already gates the buzz and its
-      // held state was otherwise unused, so this is free expression.
       g_state.breath_button_a = 1;
       break;
     case kNoteNoise:
@@ -207,6 +227,7 @@ static void HandleNoteOn(uint8_t note, uint8_t vel) {
 
 static void HandleNoteOff(uint8_t note) {
   if (note == kNoteVoiced) {
+    g_state.click_gate = 0;
     g_state.gate_voiced = 0;
     g_state.breath_button_a = 0;
   } else if (note == kNoteNoise) {

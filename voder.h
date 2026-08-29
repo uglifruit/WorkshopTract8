@@ -50,8 +50,15 @@ static constexpr int32_t kF0DefaultMilliHz = 110000;  // 110 Hz, a low male pitc
 
 // Plosive burst length, samples. 8 ms is the acoustic duration of the
 // release transient in an unaspirated stop - long enough to read as a
-// consonant, short enough not to read as a fricative.
+// consonant, short enough not to read as a fricative. This is the SHORTEST
+// the decay control goes; see kPlosiveMaxSamples.
 static constexpr int32_t kPlosiveSamples = 384;  // 8 ms at 48 kHz
+
+// Longest plosive decay, samples. At the top of the decay control the
+// burst lasts a full second, which stops being a consonant and becomes a
+// sustained noise source - useful as a voice in its own right rather than
+// as punctuation.
+static constexpr int32_t kPlosiveMaxSamples = 48000;  // 1 s at 48 kHz
 
 // Glottal gate ramp, samples. Gating the buzz with a hard edge clicks
 // audibly; 2 ms of linear ramp removes it without slurring the attack.
@@ -78,6 +85,15 @@ struct Params {
   int32_t noise_level;        // hiss gate, 0..32767
   int32_t ext_input;          // Audio In 1 sample, or 0
   bool    use_ext;            // true to replace internal excitation
+
+  // Plosive level, Q15. Scales the burst so it can be balanced against
+  // the voice - it was too loud fixed at full.
+  int32_t click_level;
+
+  // Plosive decay length, Q15, mapped between kPlosiveSamples and
+  // kPlosiveMaxSamples. At the top the burst also stops decaying and
+  // holds steady, so it reads as a sustained sound rather than a hit.
+  int32_t click_decay;
 };
 
 // Build the biquad coefficient set. Call once, before Run(). Uses double
@@ -95,8 +111,12 @@ class Voder {
   int32_t Process(const Params& p);
 
   // Fire a plosive burst. Idempotent within a burst - calling again
-  // restarts it, which is what a repeated key press should do.
-  void TriggerPlosive();
+  // restarts it, which is what a repeated key press should do. The length
+  // comes from Params::click_decay at the moment of the trigger.
+  void TriggerPlosive(int32_t decay_q15);
+
+  // Hold the burst open indefinitely (decay at maximum), or release it.
+  void SetPlosiveSustain(bool on);
 
   // Sum of band output magnitudes from the last sample, Q15-ish. Drives
   // CV Out 1 and the LED display. Not normalised: the caller scales it.
@@ -113,6 +133,8 @@ class Voder {
   uint32_t phase_inc_;      // Q32 increment
   uint32_t rng_;
   int32_t  plosive_;        // samples remaining in the burst
+  int32_t  plosive_len_;    // length this burst was started with
+  bool     plosive_hold_;   // true while sustaining at full decay
   int32_t  gate_env_;       // Q15, smoothed voiced gate
   int32_t  noise_env_;      // Q15, smoothed noise gate
   int32_t  energy_;

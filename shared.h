@@ -39,6 +39,12 @@ struct VoderState {
   int32_t pitch;         // Q15, mapped to F0 in main.cpp
   int32_t bright;        // Q15, 16384 = flat
 
+  // Click (plosive) controls. Level balances the burst against the voice -
+  // it was fixed at full and too loud. Decay runs from a short consonant
+  // hit to a steady sustained tone at the top.
+  int32_t click_level;
+  int32_t click_decay;
+
   // Third vowel axis: lip rounding, from the left/right tilt. 0 = spread,
   // 32767 = rounded. This is what makes OH reachable - see vowels.h.
   int32_t round;
@@ -51,6 +57,8 @@ struct VoderState {
   uint8_t breath_from_midi;
   uint8_t pitch_from_midi;
   uint8_t bright_from_midi;
+  uint8_t click_level_from_midi;
+  uint8_t click_decay_from_midi;
   uint8_t round_from_midi;
 
   // --- accelerometer ---------------------------------------------------
@@ -72,6 +80,10 @@ struct VoderState {
   int32_t band_gain[8];
 
   // --- buttons ----------------------------------------------------------
+  // Button 1 is a TRIGGER: it fires the click and holds it open while
+  // held, so the card can be played as a percussive voice.
+  uint8_t click_gate;
+
   uint8_t gate_voiced;
   uint8_t gate_noise;
   uint8_t freeze;

@@ -51,6 +51,7 @@ mapping, so a device straight out of the box drives it.
 |---|---|---|
 | **Fader 1** | CC 34 | **Openness** — close ↔ open (vowel F1) |
 | **Fader 8** | CC 41 | **Front** — back ↔ front (vowel F2) |
+| **Fader 2** | CC 35 | **Click decay** — short hit → steady tone |
 | Fader 3 | CC 36 | Breath — buzz ↔ noise |
 | Fader 4 | CC 37 | Pitch — F0, 50–500 Hz |
 | Fader 5 | CC 38 | Brightness — spectral tilt |
@@ -58,7 +59,7 @@ mapping, so a device straight out of the box drives it.
 | Tilt front / back | CC 42 | **Volume** — level is full, either extreme silent |
 | Tilt left / right | CC 44 | **Rounding** — level is unrounded, either extreme toward OO |
 | **Turned over** | CC 49 | **Mute** — CC 49 reads high when upright |
-| Button 1 | Note 36 (C2) | Gate the voiced buzz, **+ breath while held** |
+| **Button 1** | Note 36 (C2) | **Trigger** — fires the click and holds it open |
 | Button 2 | Note 48 (C3) | Gate the unvoiced noise |
 | Button 3 | Note 60 (C4) | Plosive burst |
 | Button 4 | Note 72 (C5) | Toggle formant freeze, **+ breath while held** |

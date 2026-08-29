@@ -119,6 +119,11 @@ class VoderCard : public ComputerCard {
     g_state.breath_from_midi = 0;
     g_state.pitch_from_midi = 0;
     g_state.bright_from_midi = 0;
+    g_state.click_level = 32767;
+    g_state.click_decay = 32767;
+    g_state.click_level_from_midi = 0;
+    g_state.click_decay_from_midi = 0;
+    g_state.click_gate = 0;
     g_state.round = 0;
     g_state.round_from_midi = 0;
     g_state.volume = 32767;
@@ -227,6 +232,19 @@ class VoderCard : public ComputerCard {
       p.noise_level = ext_gate ? 32767 : 0;
     }
 
+    // Click level and decay.
+    //
+    // BOTH DEFAULT TO FULL WITHOUT AN 8MU. The panel has no knobs free for
+    // them, so with no controller attached the click must be at full level
+    // and full sustain - otherwise the plosive inputs on the panel, and
+    // the switch-down key, would be quiet or clipped short with no way to
+    // turn them up. A card that is quieter on its own than with a
+    // controller plugged in would be exactly backwards.
+    p.click_level =
+        g_state.click_level_from_midi ? g_state.click_level : 32767;
+    p.click_decay =
+        g_state.click_decay_from_midi ? g_state.click_decay : 32767;
+
     // Audio In 1 replaces the internal excitation when patched.
     //
     // Gated on the signal actually being there, not on the jack alone -
@@ -254,19 +272,25 @@ class VoderCard : public ComputerCard {
     const uint32_t pc = g_state.plosive_count;
     if (pc != last_plosive_) {
       last_plosive_ = pc;
-      voder_.TriggerPlosive();
+      voder_.TriggerPlosive(p.click_decay);
     }
+
+    // Button 1 holds the click open while held. At a long decay setting
+    // that turns the burst into a sustained noise source; at a short one
+    // it is still a hit, because the burst has already decayed by the
+    // time the finger lifts.
+    voder_.SetPlosiveSustain(g_state.click_gate != 0);
 
     // Pulse In 1, rising edge.
     const bool pulse1 = PulseIn1();
-    if (pulse1 && !last_pulse1_) voder_.TriggerPlosive();
+    if (pulse1 && !last_pulse1_) voder_.TriggerPlosive(p.click_decay);
     last_pulse1_ = pulse1;
 
     // Switch down is a momentary plosive key - the Voder's stop keys were
     // played with the left hand, and this is the nearest thing the panel
     // has to one.
     if (SwitchVal() == Switch::Down && SwitchChanged()) {
-      voder_.TriggerPlosive();
+      voder_.TriggerPlosive(p.click_decay);
     }
 
     // --- audio ------------------------------------------------------------

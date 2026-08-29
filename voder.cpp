@@ -112,6 +112,8 @@ void Voder::Init(uint32_t seed) {
   phase_inc_ = 0;
   rng_ = seed ? seed : 0xDEADBEEFu;  // xorshift must never be zero
   plosive_ = 0;
+  plosive_len_ = kPlosiveSamples;
+  plosive_hold_ = false;
   gate_env_ = 0;
   noise_env_ = 0;
   energy_ = 0;
@@ -138,8 +140,25 @@ uint32_t __not_in_flash_func(Voder::Random)() {
   return rng_;
 }
 
-void __not_in_flash_func(Voder::TriggerPlosive)() {
-  plosive_ = kPlosiveSamples;
+void __not_in_flash_func(Voder::TriggerPlosive)(int32_t decay_q15) {
+  // Map the decay control between a consonant-length click and a full
+  // second. Squared, so the short end - where the useful consonant
+  // lengths live - gets most of the control's travel.
+  const int32_t sq = (int32_t)(((int64_t)decay_q15 * decay_q15) >> 15);
+  plosive_len_ = kPlosiveSamples +
+                 (int32_t)(((int64_t)(kPlosiveMaxSamples - kPlosiveSamples) *
+                            sq) >> 15);
+  plosive_ = plosive_len_;
+}
+
+void __not_in_flash_func(Voder::SetPlosiveSustain)(bool on) {
+  plosive_hold_ = on;
+  if (on && plosive_ <= 0) {
+    // Opening the gate with no burst running starts one, so the button
+    // works as a trigger even from silence.
+    plosive_len_ = kPlosiveMaxSamples;
+    plosive_ = plosive_len_;
+  }
 }
 
 // polyBLEP correction around a sawtooth discontinuity.
@@ -274,11 +293,22 @@ int32_t __not_in_flash_func(Voder::Process)(const Params& p) {
   // reads as a vowel onset rather than a consonant.
   if (plosive_ > 0) {
     // Linear decay over the burst. The ear reads the envelope shape of a
-    // stop release as its identity, and linear is close enough at 8 ms.
-    const int32_t env = (plosive_ << 15) / kPlosiveSamples;
+    // stop release as its identity, and linear is close enough.
+    //
+    // While sustaining, the envelope is held at full instead of decaying,
+    // so the same burst becomes a steady noise source. That is what makes
+    // the trigger button usable as a gate rather than only as a hit.
+    const int32_t env = plosive_hold_
+                        ? 32767
+                        : (plosive_ << 15) / plosive_len_;
     const int32_t burst = ((int32_t)(Random() >> 16)) - 32768;
-    sum += (int32_t)(((int64_t)burst * env) >> 17);
-    plosive_--;
+
+    // Scaled by the click level so the burst can be balanced against the
+    // voice. It was fixed at full and reported as too loud.
+    const int32_t lvl = (int32_t)(((int64_t)env * p.click_level) >> 15);
+    sum += (int32_t)(((int64_t)burst * lvl) >> 17);
+
+    if (!plosive_hold_) plosive_--;
   }
 
   // --- output -----------------------------------------------------------

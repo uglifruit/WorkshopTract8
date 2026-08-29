@@ -33,7 +33,7 @@
 // hardware rounds were lost to assuming otherwise - see midi8mu.cpp.
 //   CC 49            MUTE       LOW value = turned over = muted
 //   CC 46, 47        unassigned
-//   Note 36 (C2)     voiced buzz gate, and adds breath
+//   Note 36 (C2)     TRIGGER - fires the click and holds it open
 //   Note 48 (C3)     unvoiced noise gate
 //   Note 60 (C4)     plosive burst
 //   Note 72 (C5)     formant freeze, and adds breath
@@ -64,8 +64,10 @@ static constexpr uint8_t kCcOpenness = 34;   // fader 1
 static constexpr uint8_t kCcFront = 41;      // fader 8
 static constexpr uint8_t kCcBreath = 36;     // fader 3
 static constexpr uint8_t kCcPitch = 37;      // fader 4
-static constexpr uint8_t kCcBright = 38;     // fader 5
-static constexpr uint8_t kCcVolume = 40;    // fader 7
+static constexpr uint8_t kCcClickDecay = 35;  // fader 2
+static constexpr uint8_t kCcBright = 38;      // fader 5
+static constexpr uint8_t kCcClickLevel = 39;  // fader 6
+static constexpr uint8_t kCcVolume = 40;      // fader 7
 
 // Accelerometer.
 //
@@ -87,6 +89,12 @@ static constexpr uint8_t kCcVolume = 40;    // fader 7
 // which is 0 when level, positive lifting one way and negative the other.
 // That is genuinely bipolar, and both halves must be read to get it -
 // unlike a complementary pair, here each half carries real information.
+// These name the PHYSICAL gesture, matching the 8mu documentation. The
+// volume sense is inverted where the axis is computed, not by lying about
+// which CC is which - see UpdateVolume() in midi8mu.cpp. Lifting the BACK
+// swells and lifting the FRONT ducks, which is the way round it was asked
+// for after playing: the wrist drops the front of the device to pull a
+// phrase back.
 static constexpr uint8_t kCcLiftFront = 42;
 static constexpr uint8_t kCcLiftBack = 43;
 static constexpr uint8_t kCcLiftLeft = 44;
