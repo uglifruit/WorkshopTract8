@@ -21,8 +21,8 @@
 //   CC 37  fader 4   PITCH      F0, 50..500 Hz
 //   CC 38  fader 5   BRIGHT     spectral tilt
 //   CC 35, 39, 40    unassigned
-//   CC 42/43         VOLUME     tilt front/back
-//   CC 44/45         ROUND      tilt left/right - the vowel cube third axis
+//   CC 42/43         ROUND      tilt front/back - the vowel cube third axis
+//   CC 44/45         VOLUME     tilt left/right
 //
 // THE ACCELEROMETER CCs ARE GESTURE MAGNITUDES, NOT BIPOLAR AXES. Each
 // direction is its own controller reporting how much of that gesture is
@@ -67,10 +67,17 @@ static constexpr uint8_t kCcPitch = 37;      // fader 4
 static constexpr uint8_t kCcBright = 38;     // fader 5
 
 // Accelerometer.
-static constexpr uint8_t kCcVolUp = 42;      // tilt front
-static constexpr uint8_t kCcVolDown = 43;    // tilt back
-static constexpr uint8_t kCcRoundLeft = 44;  // tilt left
-static constexpr uint8_t kCcRoundRight = 45; // tilt right
+//
+// ROUNDING IS ON FRONT/BACK AND VOLUME ON LEFT/RIGHT, which is the swap
+// asked for after playing. Front/back is the axis the wrist makes most
+// naturally while holding the device, and rounding is a vowel control that
+// gets ridden continuously; volume is the coarser gesture and sits on the
+// side-to-side tilt. Do not swap these back without asking - the arrangement
+// came from someone actually playing it, not from the geometry.
+static constexpr uint8_t kCcRoundFront = 42;  // tilt front
+static constexpr uint8_t kCcRoundBack = 43;   // tilt back
+static constexpr uint8_t kCcVolLeft = 44;     // tilt left
+static constexpr uint8_t kCcVolRight = 45;    // tilt right
 static constexpr uint8_t kCcNotInverted = 48;  // right way up - unmute
 static constexpr uint8_t kCcInverted = 49;     // upside down - mute
 

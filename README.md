@@ -55,8 +55,8 @@ mapping, so a device straight out of the box drives it.
 | Fader 4 | CC 37 | Pitch — F0, 50–500 Hz |
 | Fader 5 | CC 38 | Brightness — spectral tilt |
 | Faders 2, 6, 7 | — | unused, on purpose |
-| Tilt front / back | CC 42 / 43 | **Volume** — flat is full, tilt back to fade |
-| Tilt left / right | CC 44 / 45 | **Rounding** — the third vowel axis |
+| Tilt front / back | CC 42 | **Rounding** — the third vowel axis (the OO dimension) |
+| Tilt left / right | CC 44 | **Volume** |
 | **Upside down** | CC 49 / 48 | **Mute** — turn over to mute, back to unmute |
 | Button 1 | Note 36 (C2) | Gate the voiced buzz, **+ breath while held** |
 | Button 2 | Note 48 (C3) | Gate the unvoiced noise |
@@ -97,12 +97,11 @@ nobody does it by accident, which is exactly what a panic stop should be.
 Turn it back over to unmute. LED 5 goes dark while muted, so the panel says
 why it is silent.
 
-**The tilt controls self-calibrate.** The 8mu reports its accelerometer as
-gesture magnitudes rather than as signed axes, and a controller lying flat
-does not necessarily send zero. So volume and rounding both learn their own
-resting point from the lowest value they have seen, and respond to movement
-away from it. Nothing to set up, and if the card is powered on with the 8mu
-already tilted it corrects itself the first time you put it down.
+**The tilt controls are continuous levels.** Each accelerometer axis sweeps
+0–127 as the device tilts, and the two halves of a pair add up to 127 — so
+the card reads one of each pair (CC 42 for rounding, CC 44 for volume) and
+ignores its partner. A level 8mu sits around the middle of each, so volume
+rests near half and tilting either way takes it to the extremes.
 
 **Buttons 1 and 4 add breath while held**, on top of wherever fader 3 is
 parked — a voiced sound with a whisper of noise under it reads as breathy

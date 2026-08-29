@@ -3,7 +3,7 @@ Name: TRACT8
 Description: An eight-band Voder - the 1939 Bell Labs talking machine - played by hand from a Music Thing 8mu over USB MIDI Host, one fader per formant band, or from the card's own knobs.
 Language: C++ (ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: "1.4.1"
+Version: "1.4.2"
 Status: Working on hardware
 License: MIT
 repository: https://github.com/uglifruit/WorkshopTract8
@@ -26,7 +26,7 @@ contact:
 
 uf2:
   - path: UF2/tract8.uf2
-    name: TRACT8 1.4.1
+    name: TRACT8 1.4.2
 
 tags:
   - synth
@@ -55,14 +55,13 @@ summary: |
   how open the mouth is, whether the tongue is forward or back, and how far
   the lips are rounded - and every vowel lives somewhere in that cube, with
   diphthongs on the way between. Openness and front are the outermost two
-  faders, 1 and 8, so the hand spans the device; rounding is the left-right
+  faders, 1 and 8, so the hand spans the device; rounding is the front-back
   tilt of the controller. Fader 3 is breath, the buzz-to-noise balance,
-  fader 4 is pitch and fader 5 is brightness. Tilting forward and back is
+  fader 4 is pitch and fader 5 is brightness. Tilting left and right is
   volume, so a phrase can be swelled and ducked without letting go of
   anything, and turning the whole thing upside down is a mute, turning it back over
-  releasing it again. The tilt controls calibrate themselves, so there is
-  nothing to set up whichever way the controller happens to be sitting when
-  the card boots.<br><br>
+  releasing it again. Each accelerometer axis is a continuous level,
+  read from one half of its complementary pair.<br><br>
 
   The four buttons gate the buzz, gate the noise, fire plosive consonants
   and latch a formant freeze; the first and last also add a little breath

@@ -47,10 +47,10 @@ CC_FRONT = 41         # fader 8  - outermost
 CC_BREATH = 36        # fader 3
 CC_PITCH = 37         # fader 4
 CC_BRIGHT = 38        # fader 5
-CC_VOL_UP = 42        # tilt front
-CC_VOL_DOWN = 43      # tilt back
-CC_ROUND_LEFT = 44    # tilt left
-CC_ROUND_RIGHT = 45   # tilt right
+CC_ROUND_FRONT = 42   # tilt front - rounding (swapped in v1.4.2)
+CC_ROUND_BACK = 43    # tilt back  - rounding
+CC_VOL_LEFT = 44      # tilt left  - volume
+CC_VOL_RIGHT = 45     # tilt right - volume
 CC_NOT_INVERTED = 48  # right way up - unmute
 CC_INVERTED = 49      # upside down - mute
 BUTTON_BREATH = 9000
@@ -92,8 +92,6 @@ class Dispatch:
 
     def __init__(self):
         self.s = State()
-        self.vol_rest = -1
-        self.round_rest = -1
         self.freeze_held = False
 
     def cc(self, cc, v):
@@ -122,40 +120,25 @@ class Dispatch:
             self.s.bright_from_midi = 1
             return
         if cc == CC_INVERTED:
-            # A gesture, not a level - any value mutes.
-            self.s.muted = 1
+            # The VALUE decides - see midi8mu.cpp for why.
+            self.s.muted = 1 if v >= 64 else 0
             return
         if cc == CC_NOT_INVERTED:
-            self.s.muted = 0
+            if v >= 64:
+                self.s.muted = 0
             return
-        if cc in (CC_VOL_UP, CC_VOL_DOWN):
-            self._volume(self._dev('vol', q15))
+        # Continuous levels, straight through. The complementary partners
+        # (CC 43, CC 45) are deliberately not read - see midi8mu.cpp.
+        if cc == CC_VOL_LEFT:
+            self.s.volume = max(0, min(32767, q15))
+            self.s.volume_from_midi = 1
             return
-        if cc in (CC_ROUND_LEFT, CC_ROUND_RIGHT):
+        if cc == CC_ROUND_FRONT:
             if self.s.freeze:
                 return
-            self._round(self._dev('round', q15))
+            self.s.round = max(0, min(32767, q15))
+            self.s.round_from_midi = 1
             return
-
-    def _dev(self, which, value):
-        """Deviation from a running-minimum rest. See midi8mu.cpp."""
-        rest = self.vol_rest if which == 'vol' else self.round_rest
-        if rest < 0 or value < rest:
-            rest = value
-            if which == 'vol':
-                self.vol_rest = rest
-            else:
-                self.round_rest = rest
-        return value - rest
-
-    def _volume(self, dev):
-        mag = abs(dev)
-        self.s.volume = max(0, min(32767, 32767 - (mag << 1)))
-        self.s.volume_from_midi = 1
-
-    def _round(self, dev):
-        self.s.round = max(0, min(32767, abs(dev) << 1))
-        self.s.round_from_midi = 1
 
     def note_on(self, note, vel):
         if vel == 0:
@@ -273,7 +256,7 @@ def check_faders():
     dd.cc(CC_OPENNESS, 100)
     dd.s.freeze = 1
     dd.cc(CC_OPENNESS, 10)
-    dd.cc(CC_ROUND_RIGHT, 100)
+    dd.cc(CC_ROUND_FRONT, 100)
     dd.cc(CC_PITCH, 90)
     good = (dd.s.openness == 100 << 8 and dd.s.round == 0
             and dd.s.pitch == 90 << 8)
@@ -285,28 +268,27 @@ def check_faders():
 
 
 def check_round():
-    print("\n11. Rounding on the left/right tilt - the cube third axis")
+    print("\n11. Rounding on the front/back tilt - the cube third axis")
     ok = True
     d = Dispatch()
     good = d.s.round == 0 and d.s.round_from_midi == 0
     print(f"   rests spread (0) before any tilt   {'ok' if good else 'FAIL'}")
     ok &= good
 
-    d.cc(CC_ROUND_LEFT, 15)          # resting value
-    at_rest = d.s.round
-    d.cc(CC_ROUND_LEFT, 120)         # real tilt
-    tilted = d.s.round
-    good = at_rest < 2000 and tilted > 10000
-    print(f"   rest 15 -> round {at_rest:5d}, tilt 120 -> {tilted:5d}   "
+    d.cc(CC_ROUND_FRONT, 127)
+    hi = d.s.round
+    d.cc(CC_ROUND_FRONT, 0)
+    lo = d.s.round
+    good = hi > 30000 and lo < 1000
+    print(f"   CC 42: 127 -> {hi:5d}, 0 -> {lo:5d}   "
           f"{'ok' if good else 'FAIL'}")
     ok &= good
 
-    # Freeze must hold the vowel, rounding included.
     d2 = Dispatch()
-    d2.cc(CC_ROUND_LEFT, 10)
-    d2.s.freeze = 1
+    d2.cc(CC_ROUND_FRONT, 100)
     before = d2.s.round
-    d2.cc(CC_ROUND_LEFT, 120)
+    d2.s.freeze = 1
+    d2.cc(CC_ROUND_FRONT, 10)
     good = d2.s.round == before
     print(f"   freeze holds rounding   {'ok' if good else 'FAIL'}")
     ok &= good
@@ -333,13 +315,15 @@ def check_mute():
     print(f"   CC 48 -> unmuted   {'ok' if good else 'FAIL'}")
     ok &= good
 
-    for v in (1, 40, 64, 127):
-        dd = Dispatch()
-        dd.cc(CC_INVERTED, v)
-        if dd.s.muted != 1:
-            ok = False
-    print(f"   any CC 49 value mutes (gesture, not threshold)   "
-          f"{'ok' if ok else 'FAIL'}")
+    # Interleaved pair: the failure that reached hardware.
+    d3 = Dispatch()
+    for _ in range(20):
+        d3.cc(CC_INVERTED, 127)
+        d3.cc(CC_NOT_INVERTED, 0)
+    good = d3.s.muted == 1
+    print(f"   holds muted through interleaved pairs   "
+          f"{'ok' if good else '<-- FLICKERS'}")
+    ok &= good
     return ok
 
 
@@ -380,29 +364,30 @@ def check_button_breath():
 
 
 def check_volume():
-    print("\n9. Volume on the tilt - rests loud, ducks when moved")
+    print("\n9. Volume on the left/right tilt - a straight 0-127 level")
     ok = True
     d = Dispatch()
     good = d.s.volume == 32767 and d.s.volume_from_midi == 0
-    print(f"   unity before any tilt: {d.s.volume}   "
+    print(f"   full volume before any tilt: {d.s.volume}   "
           f"{'ok' if good else 'FAIL'}")
     ok &= good
 
-    # A resting value of 20, then a real tilt. The old code assumed rest
-    # was zero and ducked the card permanently; see gesture_check.py.
-    d.cc(CC_VOL_UP, 20)
-    at_rest = d.s.volume
-    d.cc(CC_VOL_UP, 110)
-    tilted = d.s.volume
-    good = at_rest > 30000 and tilted < 5000
-    print(f"   rest 20 -> {at_rest:5d}, tilt 110 -> {tilted:5d}   "
-          f"{'ok' if good else '<-- FAIL'}")
+    d.cc(CC_VOL_LEFT, 127)
+    hi = d.s.volume
+    d.cc(CC_VOL_LEFT, 0)
+    lo = d.s.volume
+    good = hi > 30000 and lo < 1000
+    print(f"   CC 44: 127 -> {hi:5d}, 0 -> {lo:5d}   "
+          f"{'ok' if good else 'FAIL'}")
     ok &= good
 
-    d.cc(CC_VOL_UP, 20)
-    good = d.s.volume > 30000
-    print(f"   levelling restores volume: {d.s.volume}   "
-          f"{'ok' if good else 'FAIL'}")
+    # The complementary partner must not fight it.
+    d2 = Dispatch()
+    d2.cc(CC_VOL_LEFT, 127)
+    d2.cc(CC_VOL_RIGHT, 0)
+    good = d2.s.volume > 30000
+    print(f"   CC 45 partner leaves it alone: {d2.s.volume:5d}   "
+          f"{'ok' if good else '<-- PARTNER FOUGHT'}")
     ok &= good
     return ok
 
@@ -550,7 +535,7 @@ def check_channel_agnostic():
 
 def main():
     print("TRACT8 8mu MIDI check: faders 34 openness, 41 front, 36 breath,")
-    print("  37 pitch, 38 bright; tilt 42/43 volume, 44/45 round, 49 mute")
+    print("  37 pitch, 38 bright; tilt 42/43 round, 44/45 volume, 49 mute")
     ok = check_faders()
     ok &= check_notes()
     ok &= check_running_status()
