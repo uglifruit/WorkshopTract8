@@ -23,8 +23,16 @@
 //   CC 35, 39, 40    unassigned
 //   CC 42/43         VOLUME     tilt front/back
 //   CC 44/45         ROUND      tilt left/right - the vowel cube third axis
-//   CC 49            MUTE       held while the 8mu is upside down
-//   CC 46-48         unassigned
+//
+// THE ACCELEROMETER CCs ARE GESTURE MAGNITUDES, NOT BIPOLAR AXES. Each
+// direction is its own controller reporting how much of that gesture is
+// happening, and a controller lying flat does not necessarily send 0 on
+// any of them. Nothing here may assume a resting value: the volume and
+// round axes calibrate themselves from the first message they see. Two
+// hardware rounds were lost to assuming otherwise - see midi8mu.cpp.
+//   CC 48/49         MUTE       49 mutes, 48 unmutes (a gesture PAIR,
+//                               not a level - see midi8mu.cpp)
+//   CC 46, 47        unassigned
 //   Note 36 (C2)     voiced buzz gate, and adds breath
 //   Note 48 (C3)     unvoiced noise gate
 //   Note 60 (C4)     plosive burst
@@ -63,7 +71,8 @@ static constexpr uint8_t kCcVolUp = 42;      // tilt front
 static constexpr uint8_t kCcVolDown = 43;    // tilt back
 static constexpr uint8_t kCcRoundLeft = 44;  // tilt left
 static constexpr uint8_t kCcRoundRight = 45; // tilt right
-static constexpr uint8_t kCcInverted = 49;   // upside down - mute
+static constexpr uint8_t kCcNotInverted = 48;  // right way up - unmute
+static constexpr uint8_t kCcInverted = 49;     // upside down - mute
 
 // Button notes.
 static constexpr uint8_t kNoteVoiced = 36;   // C2

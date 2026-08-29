@@ -31,7 +31,7 @@ Checks:
   8. Channel is ignored (all 16 behave alike).
   9. Volume on the front/back accelerometer axis.
  11. Rounding on the left/right axis - the vowel cube third dimension.
- 12. Upside down mutes, and does not latch.
+ 12. Upside down mutes; right way up releases it (a gesture pair).
  13. Buttons A and D add breath while held.
  10. A sustained MIDI flood does not stall the parser (lockup regression).
 
@@ -51,6 +51,7 @@ CC_VOL_UP = 42        # tilt front
 CC_VOL_DOWN = 43      # tilt back
 CC_ROUND_LEFT = 44    # tilt left
 CC_ROUND_RIGHT = 45   # tilt right
+CC_NOT_INVERTED = 48  # right way up - unmute
 CC_INVERTED = 49      # upside down - mute
 BUTTON_BREATH = 9000
 NOTE_VOICED = 36
@@ -91,10 +92,8 @@ class Dispatch:
 
     def __init__(self):
         self.s = State()
-        self.vol_up = 0
-        self.vol_down = 0
-        self.round_left = 0
-        self.round_right = 0
+        self.vol_rest = -1
+        self.round_rest = -1
         self.freeze_held = False
 
     def cc(self, cc, v):
@@ -123,37 +122,39 @@ class Dispatch:
             self.s.bright_from_midi = 1
             return
         if cc == CC_INVERTED:
-            self.s.muted = 1 if v >= 64 else 0
+            # A gesture, not a level - any value mutes.
+            self.s.muted = 1
             return
-        if cc == CC_VOL_UP:
-            self.vol_up = q15
-            self._volume()
+        if cc == CC_NOT_INVERTED:
+            self.s.muted = 0
             return
-        if cc == CC_VOL_DOWN:
-            self.vol_down = q15
-            self._volume()
+        if cc in (CC_VOL_UP, CC_VOL_DOWN):
+            self._volume(self._dev('vol', q15))
             return
-        if cc == CC_ROUND_LEFT:
+        if cc in (CC_ROUND_LEFT, CC_ROUND_RIGHT):
             if self.s.freeze:
                 return
-            self.round_left = q15
-            self._round()
-            return
-        if cc == CC_ROUND_RIGHT:
-            if self.s.freeze:
-                return
-            self.round_right = q15
-            self._round()
+            self._round(self._dev('round', q15))
             return
 
-    def _volume(self):
-        vol = 32767 - self.vol_down + self.vol_up
-        self.s.volume = max(0, min(32767, vol))
+    def _dev(self, which, value):
+        """Deviation from a running-minimum rest. See midi8mu.cpp."""
+        rest = self.vol_rest if which == 'vol' else self.round_rest
+        if rest < 0 or value < rest:
+            rest = value
+            if which == 'vol':
+                self.vol_rest = rest
+            else:
+                self.round_rest = rest
+        return value - rest
+
+    def _volume(self, dev):
+        mag = abs(dev)
+        self.s.volume = max(0, min(32767, 32767 - (mag << 1)))
         self.s.volume_from_midi = 1
 
-    def _round(self):
-        r = self.round_right - self.round_left
-        self.s.round = max(0, min(32767, r))
+    def _round(self, dev):
+        self.s.round = max(0, min(32767, abs(dev) << 1))
         self.s.round_from_midi = 1
 
     def note_on(self, note, vel):
@@ -291,23 +292,29 @@ def check_round():
     print(f"   rests spread (0) before any tilt   {'ok' if good else 'FAIL'}")
     ok &= good
 
-    d.cc(CC_ROUND_RIGHT, 127)
-    good = d.s.round > 30000
-    print(f"   tilt right -> round {d.s.round:5d}   "
+    d.cc(CC_ROUND_LEFT, 15)          # resting value
+    at_rest = d.s.round
+    d.cc(CC_ROUND_LEFT, 120)         # real tilt
+    tilted = d.s.round
+    good = at_rest < 2000 and tilted > 10000
+    print(f"   rest 15 -> round {at_rest:5d}, tilt 120 -> {tilted:5d}   "
           f"{'ok' if good else 'FAIL'}")
     ok &= good
 
+    # Freeze must hold the vowel, rounding included.
     d2 = Dispatch()
-    d2.cc(CC_ROUND_LEFT, 127)
-    good = d2.s.round == 0
-    print(f"   tilt left  -> round {d2.s.round:5d} (clamped at spread)   "
-          f"{'ok' if good else 'FAIL'}")
+    d2.cc(CC_ROUND_LEFT, 10)
+    d2.s.freeze = 1
+    before = d2.s.round
+    d2.cc(CC_ROUND_LEFT, 120)
+    good = d2.s.round == before
+    print(f"   freeze holds rounding   {'ok' if good else 'FAIL'}")
     ok &= good
     return ok
 
 
 def check_mute():
-    print("\n12. Upside down is a hard mute")
+    print("\n12. Upside down mutes; right way up releases it")
     ok = True
     d = Dispatch()
     good = d.s.muted == 0
@@ -316,20 +323,23 @@ def check_mute():
 
     d.cc(CC_INVERTED, 127)
     good = d.s.muted == 1
-    print(f"   CC 49 high -> muted   {'ok' if good else 'FAIL'}")
+    print(f"   CC 49 -> muted   {'ok' if good else 'FAIL'}")
     ok &= good
 
-    d.cc(CC_INVERTED, 0)
+    # CC 49 simply stops being sent when the controller is righted; only
+    # CC 48 releases the mute. Treating CC 49 as a level latched it on.
+    d.cc(CC_NOT_INVERTED, 127)
     good = d.s.muted == 0
-    print(f"   CC 49 low  -> unmuted   {'ok' if good else 'FAIL'}")
+    print(f"   CC 48 -> unmuted   {'ok' if good else 'FAIL'}")
     ok &= good
 
-    # Must not latch: turning back over has to restore sound.
-    d.cc(CC_INVERTED, 127)
-    d.cc(CC_INVERTED, 10)
-    good = d.s.muted == 0
-    print(f"   does not latch   {'ok' if good else 'FAIL'}")
-    ok &= good
+    for v in (1, 40, 64, 127):
+        dd = Dispatch()
+        dd.cc(CC_INVERTED, v)
+        if dd.s.muted != 1:
+            ok = False
+    print(f"   any CC 49 value mutes (gesture, not threshold)   "
+          f"{'ok' if ok else 'FAIL'}")
     return ok
 
 
@@ -370,30 +380,28 @@ def check_button_breath():
 
 
 def check_volume():
-    print("\n9. Volume on the front/back tilt")
+    print("\n9. Volume on the tilt - rests loud, ducks when moved")
     ok = True
     d = Dispatch()
     good = d.s.volume == 32767 and d.s.volume_from_midi == 0
-    print(f"   rests at unity before any tilt: {d.s.volume}   "
+    print(f"   unity before any tilt: {d.s.volume}   "
           f"{'ok' if good else 'FAIL'}")
     ok &= good
 
-    d.cc(CC_VOL_UP, 127)
-    up = d.s.volume
-    d2 = Dispatch()
-    d2.cc(CC_VOL_DOWN, 127)
-    down = d2.s.volume
-    # Back tilt must reach silence, or the card cannot be faded out.
-    good = up >= 32767 and down < 1000
-    print(f"   tilt front -> {up:5d}, tilt back -> {down:5d}   "
-          f"{'ok - full duck to silence' if good else 'FAIL'}")
+    # A resting value of 20, then a real tilt. The old code assumed rest
+    # was zero and ducked the card permanently; see gesture_check.py.
+    d.cc(CC_VOL_UP, 20)
+    at_rest = d.s.volume
+    d.cc(CC_VOL_UP, 110)
+    tilted = d.s.volume
+    good = at_rest > 30000 and tilted < 5000
+    print(f"   rest 20 -> {at_rest:5d}, tilt 110 -> {tilted:5d}   "
+          f"{'ok' if good else '<-- FAIL'}")
     ok &= good
 
-    d3 = Dispatch()
-    d3.cc(CC_VOL_DOWN, 127)
-    d3.cc(CC_VOL_UP, 0)
-    good = 0 <= d3.s.volume <= 32767
-    print(f"   stays in Q15 range at the extreme: {d3.s.volume}   "
+    d.cc(CC_VOL_UP, 20)
+    good = d.s.volume > 30000
+    print(f"   levelling restores volume: {d.s.volume}   "
           f"{'ok' if good else 'FAIL'}")
     ok &= good
     return ok

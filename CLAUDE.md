@@ -11,7 +11,9 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
-## Current status: v1.4.0, the vowel cube
+## Current status: v1.4.1, accelerometer semantics fixed
+
+## Previously: v1.4.0, the vowel cube
 
 ## Previously: v1.3.0, the partials left the interface
 
@@ -376,7 +378,61 @@ loudly. WorkshopSpectral modelled 51% and measured 231% on real silicon. **CV
 Out 2 is the authority on this card's cost.** Once TRACT8 has run on hardware,
 replace the prediction with the reading.
 
-## The vowel cube (v1.4.0)
+## The accelerometer is GESTURE MAGNITUDES, not bipolar axes (v1.4.1)
+
+Two hardware reports, one root cause: *"Tilt isn't doing volume now!? And
+upside down should be MUTE."* Both were the same wrong assumption.
+
+**Each gesture direction is its own controller reporting how much of that
+gesture is happening.** "Lift front" (CC 42) and "lift back" (CC 43) are two
+independent numbers, not two ends of one signed axis. And a controller lying
+flat does not necessarily send 0 on either.
+
+### Why volume died
+
+```cpp
+volume = 32767 - lift_back + lift_front;   // WRONG
+```
+
+This assumes `lift_back` rests at 0. If it rests anywhere above zero the
+card is quiet or silent from boot - and because the value is already clamped
+at the bottom, moving the controller appears to do **nothing at all**. That
+is why it read as "tilt isn't doing volume" rather than "volume is too low".
+
+**The fix assumes nothing.** Each axis tracks its own resting value as a
+**running minimum** and responds to deviation from it. A gesture magnitude
+is non-negative and falls back toward its floor when the controller is
+level, so the minimum converges within a second of ordinary handling.
+
+Taking the *first* value instead has a nasty failure mode: if the 8mu is
+tilted when the first message arrives - or only transmits once movement
+starts, so the first message is already mid-gesture - then "tilted" becomes
+the zero point, level becomes a duck, and only a power cycle cures it. The
+running minimum recovers on its own the first time the controller is put
+down. `gesture_check.py` tests exactly that case.
+
+### Why mute never worked
+
+CC 49 "inverted" and CC 48 "not inverted" are a **gesture pair**. CC 49 does
+not fall back to zero when the controller is turned right side up; it simply
+stops being sent while CC 48 is sent instead. Reading CC 49 as a level meant
+the mute engaged and then never released.
+
+Now CC 49 mutes and CC 48 unmutes, and neither is treated as a level - any
+value on CC 49 mutes, because it is a gesture rather than a threshold.
+
+### Why no existing test caught either
+
+`midi_check.py` transcribes the firmware's own dispatch, so it shared the
+same assumption and agreed with it. **A test that models the component under
+test cannot find a bug in the model.**
+
+`tools/gesture_check.py` is new and models the DEVICE instead - what an 8mu
+actually puts on the wire, including resting offsets and the gesture pair -
+then checks the firmware copes. That is the shape any future
+controller-semantics test should take.
+
+## Previously: the vowel cube (v1.4.0)
 
 Four changes, all from playing, and the first is the interesting one.
 
@@ -564,6 +620,8 @@ counts against 132 before, with the worst case at 1568 of 2047.
 
 ## Still to do
 
+- [ ] Confirm volume and mute now behave - both were broken by the
+      same wrong assumption and both are unverified on hardware.
 - [ ] Confirm the vowel CUBE is playable, and that rounding on the
       left/right tilt is a gesture that can be held steady while the
       faders move. If it fights the volume tilt, the two axes may

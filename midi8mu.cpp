@@ -5,13 +5,6 @@
 
 namespace tract8 {
 
-// The accelerometer gestures arrive as separate controllers per direction,
-// so each axis is the difference of a pair. Held here so a message on one
-// direction does not wipe the other.
-static int32_t s_vol_up = 0;
-static int32_t s_vol_down = 0;
-static int32_t s_round_left = 0;
-static int32_t s_round_right = 0;
 
 // Toggle edge state for the freeze button.
 static bool s_freeze_held = false;
@@ -21,28 +14,69 @@ static bool s_freeze_held = false;
 // special-case the top value.
 static inline int32_t CcToQ15(uint8_t v) { return (int32_t)v << 8; }
 
-// Volume from the net front/back tilt.
+// Volume and rounding from the accelerometer.
 //
-// Rests at UNITY, not at half. A controller lying flat must be at full
-// volume, because that is where it spends most of its life and nobody
-// wants to hold a tilt just to be heard. Tilting back ducks all the way to
-// silence; tilting forward does nothing extra, unity being already the
-// ceiling. Splitting the range around a centre was tried and wasted half
-// of it: a full back tilt reached only half volume, so the card could not
-// be faded out at all.
-static void UpdateVolume() {
-  int32_t vol = 32767 - s_vol_down + s_vol_up;
+// THE LESSON THAT COST TWO HARDWARE ROUNDS: the 8mu's accelerometer CCs
+// are GESTURE MAGNITUDES, not a bipolar axis with a known resting value.
+// "Lift front" and "lift back" are two independent controllers that each
+// report how much of that gesture is happening, and a controller lying
+// flat does not necessarily send 0 on either of them.
+//
+// The first version computed
+//
+//     volume = 32767 - lift_back + lift_front
+//
+// which assumed lift_back rests at 0. If it rests anywhere above zero the
+// card is quiet or silent from the moment it boots, and - this is the part
+// that made it look broken rather than wrong - the volume is already
+// clamped at the bottom, so moving the controller appears to do nothing at
+// all. Reported from hardware as "tilt isn't doing volume now".
+//
+// The fix is to assume nothing about resting values and CALIBRATE. The
+// first message on each axis establishes that axis's rest point; from then
+// on only the DEVIATION from rest is used. That works whatever the 8mu
+// happens to send when level, and it needs no configuration.
+static int32_t s_vol_rest = -1;      // -1 = not yet calibrated
+static int32_t s_round_rest = -1;
+
+// Deviation from an axis's resting value, Q15.
+//
+// Rest is tracked as the RUNNING MINIMUM rather than the first value seen.
+// A gesture magnitude is non-negative and falls back toward its floor when
+// the controller is level, so the minimum converges on the true resting
+// value within a second of ordinary handling.
+//
+// Taking the first value instead has a nasty failure mode: if the 8mu
+// happens to be tilted when the first message arrives - or if it only
+// transmits once movement starts, so the first message is already
+// mid-gesture - then "tilted" becomes the zero point, level becomes a
+// duck, and the only cure is a power cycle. The running minimum recovers
+// from that on its own the first time the controller is put down.
+static int32_t Deviation(int32_t* rest, int32_t value) {
+  if (*rest < 0 || value < *rest) *rest = value;
+  return value - *rest;
+}
+
+// Volume: rests at UNITY and ducks as the controller is tilted either way
+// from where it was first seen. Full volume is the resting state, because
+// that is where the controller spends most of its life and nobody wants to
+// hold a pose just to be heard.
+static void UpdateVolume(int32_t deviation) {
+  const int32_t mag = deviation < 0 ? -deviation : deviation;
+  int32_t vol = 32767 - (mag << 1);   // full duck within half a tilt range
   if (vol < 0) vol = 0;
   if (vol > 32767) vol = 32767;
   g_state.volume = vol;
   g_state.volume_from_midi = 1;
 }
 
-// Rounding, the vowel cube third axis, from the net left/right tilt.
-// Rests spread (0) with the controller level, so the flat position is the
-// ordinary unrounded vowel and rounding is something you reach for.
-static void UpdateRound() {
-  int32_t r = s_round_right - s_round_left;
+// Rounding, the vowel cube third axis. Rests spread and rounds as the
+// controller is tilted, in either direction - which of left or right
+// rounds is not worth caring about, since the player will simply learn
+// whichever way their unit moves.
+static void UpdateRound(int32_t deviation) {
+  int32_t r = deviation < 0 ? -deviation : deviation;
+  r <<= 1;
   if (r < 0) r = 0;
   if (r > 32767) r = 32767;
   g_state.round = r;
@@ -84,31 +118,46 @@ static void HandleCc(uint8_t cc, uint8_t v) {
       return;
 
     case kCcInverted:
-      // Upside down is a hard mute. The 8mu sends this as a level rather
-      // than a switch, so treat the top half of its range as inverted.
-      g_state.muted = (v >= 64) ? 1 : 0;
+      // Upside down is a hard mute, and it LATCHES ON while the gesture
+      // is being reported.
+      //
+      // This is the other half of the same lesson. The 8mu sends
+      // "inverted" (CC 49) and "not inverted" (CC 48) as separate
+      // gestures; CC 49 does not fall back to zero when the controller is
+      // turned right side up, it simply stops being sent while CC 48 is
+      // sent instead. Treating CC 49 as a level meant the mute engaged and
+      // then never released - reported from hardware as the mute not
+      // working at all.
+      //
+      // So: CC 49 mutes, CC 48 unmutes, and neither is a level.
+      g_state.muted = 1;
+      return;
+
+    case kCcNotInverted:
+      g_state.muted = 0;
       return;
 
     case kCcVolUp:
-      s_vol_up = CcToQ15(v);
-      UpdateVolume();
+      UpdateVolume(Deviation(&s_vol_rest, CcToQ15(v)));
       return;
 
     case kCcVolDown:
-      s_vol_down = CcToQ15(v);
-      UpdateVolume();
+      // Front and back report the same physical axis from opposite ends,
+      // and only one of them is non-zero at a time. Both feed the same
+      // rest tracker and the same magnitude, so whichever the unit
+      // actually sends is the one that takes effect - the card does not
+      // need to know which way up the gesture is defined.
+      UpdateVolume(Deviation(&s_vol_rest, CcToQ15(v)));
       return;
 
     case kCcRoundLeft:
       if (g_state.freeze) return;
-      s_round_left = CcToQ15(v);
-      UpdateRound();
+      UpdateRound(Deviation(&s_round_rest, CcToQ15(v)));
       return;
 
     case kCcRoundRight:
       if (g_state.freeze) return;
-      s_round_right = CcToQ15(v);
-      UpdateRound();
+      UpdateRound(Deviation(&s_round_rest, CcToQ15(v)));
       return;
 
     default:

@@ -57,7 +57,7 @@ mapping, so a device straight out of the box drives it.
 | Faders 2, 6, 7 | — | unused, on purpose |
 | Tilt front / back | CC 42 / 43 | **Volume** — flat is full, tilt back to fade |
 | Tilt left / right | CC 44 / 45 | **Rounding** — the third vowel axis |
-| **Upside down** | CC 49 | **Mute** |
+| **Upside down** | CC 49 / 48 | **Mute** — turn over to mute, back to unmute |
 | Button 1 | Note 36 (C2) | Gate the voiced buzz, **+ breath while held** |
 | Button 2 | Note 48 (C3) | Gate the unvoiced noise |
 | Button 3 | Note 60 (C4) | Plosive burst |
@@ -93,8 +93,16 @@ its F2 (840 Hz) below both back corners. Tilt the controller and it appears.
 AW and ER come with it.
 
 **Upside down mutes.** Turning the controller over is unmistakable and
-nobody does it by accident, which is exactly what a panic stop should be. It
-does not latch, and LED 5 goes dark so the panel says why it is silent.
+nobody does it by accident, which is exactly what a panic stop should be.
+Turn it back over to unmute. LED 5 goes dark while muted, so the panel says
+why it is silent.
+
+**The tilt controls self-calibrate.** The 8mu reports its accelerometer as
+gesture magnitudes rather than as signed axes, and a controller lying flat
+does not necessarily send zero. So volume and rounding both learn their own
+resting point from the lowest value they have seen, and respond to movement
+away from it. Nothing to set up, and if the card is powered on with the 8mu
+already tilted it corrects itself the first time you put it down.
 
 **Buttons 1 and 4 add breath while held**, on top of wherever fader 3 is
 parked — a voiced sound with a whisper of noise under it reads as breathy
