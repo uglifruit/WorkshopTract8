@@ -12,24 +12,14 @@ Play it from the panel, or from a [Music Thing
 
 ## What it does
 
-The Voder was the first machine that could talk. It had no vocabulary and no
-text input. It made two raw sounds — a buzz and a hiss — and an operator
-shaped them into speech in real time using ten finger keys, a wrist bar and
-a foot pedal. Operators trained for months.
-
-This is that instrument, with eight bands instead of ten:
-
 - **Two excitation sources.** A bandlimited buzz at F0 for voiced sounds,
-  white noise for sibilants, crossfaded continuously rather than switched.
+  white noise for sibilants.
 - **Eight fixed bandpass filters** at 250, 450, 700, 1000, 1400, 1900, 2600
-  and 3800 Hz. **The gains are the performance.**
+  and 3800 Hz.
 - **Plosive bursts** for the stop consonants the original had dedicated keys
   for.
-- **A vowel cube** you steer with two or three controls rather than eight.
+- **A vowel cube** you steer with two or three controls.
 
-It is not a vocoder and not a text-to-speech engine. Nothing analyses an
-input signal and nothing knows what a word is. What comes out is whatever
-your hands put in.
 
 ## Two modes
 
@@ -37,9 +27,6 @@ your hands put in.
 |---|---|---|---|
 | **MAIN BOOT** | Just turn the card on | **BABBLE** — every knob drives several things at once, so it talks from a single gate with nothing else attached | **even** (0, 2, 4) |
 | **ALT BOOT** | **Hold the switch down** at power-on | **Deliberate** — one knob, one parameter | **odd** (1, 3, 5) |
-
-The switch is only read once, after the boot window has fully elapsed, so
-the mode never latches on an unsettled reading.
 
 ---
 
@@ -58,7 +45,7 @@ the mode never latches on an unsettled reading.
 | Knob | Controls |
 |---|---|
 | **Main** | **Voice size** — pitch, brightness and vowel placement together, from a small bright voice to a large dark one |
-| **X** | **Animation** — how much the voice wanders between syllables, from a monotone to muttering |
+| **X** | **Animation** — how much the voice wanders between syllables |
 | **Y** | **Consonants** — how many syllables get a plosive, and how loud |
 
 Set a voice on page 2, then play it on page 1.
@@ -76,16 +63,12 @@ closures, not gaps between notes.
 itself, no gate needed. The LEDs fill as a progress bar while you hold.
 **Tap the switch to stop.**
 
-It generates phrases rather than an even stream: 2–7 syllables of differing
-lengths, then a pause long enough to read as a breath. Some syllables get a
+It generates phrases rather than an even stream. Some syllables get a
 consonant, most do not. LED 5 pulses with each syllable.
-
-Deliberately asymmetric — starting something that then plays by itself takes
-effort, stopping it does not.
 
 ---
 
-## ALT BOOT — the deliberate mode
+## ALT BOOT
 
 *Hold the switch down while powering on to reach this mode.*
 
@@ -122,22 +105,27 @@ Plug it into the front USB-C jack. Nothing to configure — the card reads the
 | Lift back / front | CC 43 / 42 | **Volume** — back swells, front ducks *(deliberate mode only)* |
 | Lift left / right | CC 44 / 45 | **Rounding** — the third vowel axis |
 | **Button 1** | Note 36 (C2) | **Mute** while held |
-| **Button 2** | Note 48 (C3) | **Gate** — sustains the voice while held |
+| **Button 2** | Note 48 (C3) | **Gate** — sustains the voice while held, and adds breath - the main PERFORMANCE button in Main boot mode |
 | **Button 3** | Note 60 (C4) | Plosive burst |
-| **Button 4** | Note 72 (C5) | **Freeze** the formants while held |
+| **Button 4** | Note 72 (C5) | **Freeze** the formants while held, and adds breath |
 
-Channel-agnostic — set the 8mu to any channel.
 
 **Button 2 is a gate.** Holding it opens the voice and keeps it open, so the
 card can be played from the 8mu alone with nothing in the jacks. Unlike a
-gate patched into Pulse In 2 it does *not* chatter in BABBLE — a sequencer
-gate is a stream of events, a finger on a button is one sustained intent.
+gate patched into Pulse In 2 - a finger on a button is one sustained syllable.
 
 **Button 4 freezes while held, and every LED goes to half brightness while
 it does.** Freeze stops openness, front, rounding and the vowel morph all at
 once, so a frozen card looks exactly like a broken one; the flat even glow
 is unlike any other display on the card and says which it is. Button 1's
 mute dims all six further still.
+
+**Buttons 2 and 4 also add breath** — about a quarter of the range, on top
+of wherever the breath fader is parked. Both buttons already did something
+and neither used its held state for anything else, so the gesture is free:
+press one over a voiced sound and it goes breathy without losing the pitch.
+It is an addition, not a setting, so it layers on the fader rather than
+replacing it.
 
 ### The vowel cube
 
@@ -161,7 +149,7 @@ controls you play constantly span the hand.
 
 ### Volume
 
-Fader 7 sets the base level, and **lifting the back or front of the
+8mu Fader 7 sets the base level, and **lifting the back or front of the
 controller swings a full scale either side of it**. Put the fader halfway
 and you have a full swell above and a full duck below.
 
@@ -170,7 +158,7 @@ controller lying flat sits exactly where the fader says. The response is
 squared, so a quarter lift costs only 0.6 dB: holding it roughly level is
 fine.
 
-**In BABBLE the tilt does not touch the volume at all** — fader 7 alone sets
+**In main boot mode the tilt does not touch the volume at all** — fader 7 alone sets
 it. The assumption in the main mode is that you want sound, and a card that
 can be silenced by holding the controller at the wrong angle is working
 against its player.
@@ -196,20 +184,16 @@ against its player.
 ### Feeding it random voltages
 
 **Every CV adds to its control rather than replacing it**, so a random
-voltage wanders the sound around wherever the knobs are parked — the patch
-never has to supply a sensible absolute value, and nothing goes dead when a
-cable goes in.
+voltage wanders the sound around wherever the knobs are parked.
 
 **CV In 2 is the one to reach for first.** It moves openness up as front
 moves down, sweeping the cube along its diagonal, which crosses the middle
-where the distinct vowels live. A sample-and-hold here walks through
-recognisably different vowels: the diagonal spans 17 dB against 10 dB for
-one axis alone.
+where the distinct vowels live. A sample-and-hold here works well.
 
 **Gates chatter without clicking.** Pulse In 2 opens fully up to about
 200 Hz and above that becomes amplitude modulation rather than clicks.
 
-A good first patch: slow random into CV In 2, a clock divided a few ways
+A good first patch: slow random into CV In , a clock divided a few ways
 into both pulse inputs, and an envelope into Audio In 2.
 
 **Audio In 1 sums, it does not replace.** Patch a drum loop in and it goes
@@ -219,83 +203,13 @@ the source.
 
 ---
 
-## Breath is a ratio, not a level
+## Breath is a ratio
 
-Breath changes how *breathy* the voice is, not how loud — sweep it end to
-end and the level stays put while the character moves from a clear hum to a
-whisper. It behaves the same whichever buttons are held: the gates decide
-the envelope and breath decides what is inside it.
-
-That makes it duck and swell with everything else, which is what a voice
-does.
+Breath changes how *breathy* the voice is.
 
 ## The plosive
 
-The click is a short bandpassed burst, roughly 600–2800 Hz, because that is
-where a bilabial release actually sits. Below 200 Hz it would be a thump and
-above 4 kHz a hi-hat; a real /p/ is neither. The default is 12 ms and about
-18 dB under the voice — punctuation, not percussion — with fader 6 reaching
-above the voice for a deliberate hit.
-
-## Output level
-
-An ordinary vowel peaks around 2.8 V, with momentary peaks near 4.2 V, on
-outputs that reach ±6 V.
-
-That last stretch is deliberately not used. The output stage is a limiter
-with a hard knee: below 4.4 V it is **exactly** linear — not approximately,
-bit-for-bit — so everything you actually play passes through undistorted,
-and only genuine transients bend, landing gently rather than clipping flat.
-
-The gain is set so that peaks stay inside the linear region. An earlier
-version used a cubic soft clipper, which sounds like the gentler choice and
-is not: a cubic curves from the very first sample, so it has no linear
-region at all and distorts *everything* rather than just the peaks. It
-measured 28 dB of THD on a normal vowel and was audible as a whine that
-tracked the volume and brightness controls. The same vowel now measures
-92 dB down.
-
-## Reading the DSP load
-
-CV Out 2 outputs measured microseconds per sample against the 20.83 µs
-budget, 0 V to about 5 V for 0–100%. This is a measurement, not an estimate.
-
-## Building
-
-```bash
-cmake -B build -G Ninja
-cmake --build build
-```
-
-Then drag `build/tract8.uf2` onto the Pico in bootloader mode. A released
-binary is committed at `UF2/tract8.uf2`.
-
-The build reports 12 warnings, all from the Pico SDK's `pwm.h` inlined into
-the vendored `ComputerCard.h`. None come from this card's own sources.
-
-## Testing
-
-Twelve host-side scripts under `tools/`, run individually. They need
-`numpy`.
-
-```bash
-python tools/filter_check.py    # band geometry, Q15 quantisation, STABILITY
-python tools/excite_check.py    # polyBLEP aliasing, noise whiteness
-python tools/chain_check.py     # absolute levels, click balance, plosive band
-python tools/playable_check.py  # the vowel cube, panel reclaim, knob effect
-python tools/midi_check.py      # 8mu dispatch, parser, USB callback handoff
-python tools/gesture_check.py   # accelerometer lift semantics
-python tools/cv_check.py        # do random voltages actually babble?
-python tools/babble_check.py    # BABBLE structure and boot detection
-python tools/autochat_check.py  # phrase structure - does it have lungs?
-python tools/silence_check.py   # no jack fault may mute the card
-python tools/init_check.py      # the bank is usable before main() runs
-python tools/budget_check.py    # cycle estimate (prediction, not measurement)
-```
-
-Several of these exist because a bug reached hardware that a proxy
-measurement had declared healthy. They test the property that would sound
-wrong, not something correlated with it. See `CLAUDE.md`.
+The click is a short bandpassed burst, roughly 600–2800 Hz.
 
 ## Credits
 

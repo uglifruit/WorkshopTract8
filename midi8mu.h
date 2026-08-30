@@ -45,9 +45,9 @@
 // need the same finger twice or a wrist move. This was reported from
 // playing, and it is the kind of thing only playing tells you.
 //
-// Faders 2, 6 and 7 are deliberately unassigned. Five controls that each
-// mean something beat eight that must be operated as a chord - the version
-// that put one filter band on each fader was unplayable.
+// No fader is a single filter band. Five controls that each mean something
+// beat eight that must be operated as a chord - the version that put one
+// band on each fader was unplayable, and that verdict came from playing it.
 //
 // Everything else - other CCs, other notes, pitch bend, sysex, program
 // change, clock - is silently dropped. Channel-agnostic.
