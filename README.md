@@ -118,7 +118,7 @@ Plug it into the front USB-C jack. Nothing to configure — the card reads the
 | Lift back / front | CC 43 / 42 | **Volume** — back swells, front ducks |
 | Lift left / right | CC 44 / 45 | **Rounding** — the third vowel axis |
 | **Button 1** | Note 36 (C2) | **Mute** while held |
-| **Button 2** | Note 48 (C3) | **New sound** — jumps to a random voice |
+| Button 2 | Note 48 (C3) | *unassigned* |
 | **Button 3** | Note 60 (C4) | Plosive burst |
 | **Button 4** | Note 72 (C5) | **Freeze** the formants while held |
 
@@ -129,10 +129,6 @@ it does.** Freeze stops openness, front, rounding and the vowel morph all at
 once, so a frozen card looks exactly like a broken one; the flat even glow
 is unlike any other display on the card and says which it is. Button 1's
 mute dims all six further still.
-
-**Button 2 draws a whole new voice** — vowel, pitch, brightness and breath
-together — rather than nudging one parameter. Move any knob and the panel
-takes back over.
 
 ### The vowel cube
 

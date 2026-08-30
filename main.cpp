@@ -113,11 +113,6 @@ static constexpr int32_t kBreathMaxSamples = 38400;   // 0.8 s
 // click was removed - but a few give the phrase articulation.
 static constexpr int32_t kPlosiveChance = 70;         // ~27%
 
-// How far a knob must move to cancel a random draw, in summed ADC counts
-// across all three. Large enough that ADC jitter cannot clear it and small
-// enough that a deliberate nudge does.
-static constexpr int32_t kRandomReleaseCounts = 600;
-
 // Default click level with no 8mu attached, Q15. About -14 dB.
 //
 // The click is a broadband burst summed AFTER the filter bank, so it is
@@ -177,12 +172,6 @@ class VoderCard : public ComputerCard {
     panel_round_ = 0;        // spread; the unrounded vowels
 
     last_plosive_ = 0;
-    last_random_ = 0;
-    rand_state_ = time_us_32() | 1u;
-    rand_openness_ = rand_front_ = rand_round_ = 0;
-    rand_pitch_ = rand_bright_ = rand_breath_ = 0;
-    rand_seen_main_ = rand_seen_x_ = rand_seen_y_ = 0;
-    rand_active_ = false;
     last_pulse1_ = false;
     load_acc_ = 0;
     load_count_ = 0;
@@ -234,7 +223,6 @@ class VoderCard : public ComputerCard {
     g_state.breath_button_a = 0;
     g_state.breath_button_d = 0;
     g_state.midi_mute = 0;
-    g_state.random_count = 0;
     g_state.freeze = 0;
     g_state.midi_connected = 0;
     g_state.plosive_count = 0;
@@ -421,9 +409,8 @@ class VoderCard : public ComputerCard {
     // Pitch. Fader 4 if the 8mu has sent it, otherwise Knob 1 on page 2.
     // Then 1V/oct from CV In 1 on top, so the card still tracks a keyboard
     // whichever control set the base note.
-    int32_t pitch_src =
+    const int32_t pitch_src =
         MidiOwns(g_state.pitch_from_midi) ? g_state.pitch : panel_pitch_;
-    if (rand_active_) pitch_src = rand_pitch_;
     int32_t f0 = kF0MinMilliHz +
                  (int32_t)(((int64_t)pitch_src *
                             (kF0MaxMilliHz - kF0MinMilliHz)) >> 15);
@@ -519,32 +506,6 @@ class VoderCard : public ComputerCard {
     // <<4 puts a full-scale input level with the internal sources, so a
     // patched signal can carry the sound rather than sitting under it.
     p.ext_input = Connected(Input::Audio1) ? ((int32_t)AudioIn1() << 4) : 0;
-
-    // --- button 2: a new sound --------------------------------------------
-    //
-    // Counted, not flagged, like the plosive triggers. Draws a whole new
-    // voice rather than nudging one parameter: a "random" that moved only
-    // the vowel would be a slower way of turning a knob, where the point
-    // of the button is to land somewhere you would not have chosen.
-    const uint32_t rc = g_state.random_count;
-    if (rc != last_random_) {
-      last_random_ = rc;
-      rand_state_ ^= rand_state_ << 13;
-      rand_state_ ^= rand_state_ >> 17;
-      rand_state_ ^= rand_state_ << 5;
-      const uint32_t r = rand_state_;
-
-      // Vowel anywhere in the cube, pitch in the spoken range, and a
-      // character to match. Brightness and breath are drawn too, so the
-      // whole voice changes rather than just which vowel it is saying.
-      rand_openness_ = (int32_t)(r & 0x7FFF);
-      rand_front_ = (int32_t)((r >> 8) & 0x7FFF);
-      rand_round_ = (int32_t)((r >> 16) & 0x7FFF);
-      rand_pitch_ = 4000 + (int32_t)((r >> 4) % 16000u);
-      rand_bright_ = 8000 + (int32_t)((r >> 12) % 16000u);
-      rand_breath_ = (int32_t)((r >> 20) & 0x7FFF);
-      rand_active_ = true;
-    }
 
     // --- plosive triggers -------------------------------------------------
     // Counted, not flagged: fire once per increment Core 1 has made since
@@ -766,22 +727,6 @@ class VoderCard : public ComputerCard {
     }
     if (++panel_phase_ >= kPanelDiv) panel_phase_ = 0;
 
-    // Any real knob movement cancels a random draw, so the panel is never
-    // dead after pressing the button - the same principle as the 8mu
-    // takeover, and for the same reason.
-    if (rand_active_) {
-      const int32_t d0 = knob_main_ - rand_seen_main_;
-      const int32_t d1 = knob_x_ - rand_seen_x_;
-      const int32_t d2 = knob_y_ - rand_seen_y_;
-      const int32_t moved = (d0 < 0 ? -d0 : d0) + (d1 < 0 ? -d1 : d1) +
-                            (d2 < 0 ? -d2 : d2);
-      if (moved > kRandomReleaseCounts) rand_active_ = false;
-    } else {
-      rand_seen_main_ = knob_main_;
-      rand_seen_x_ = knob_x_;
-      rand_seen_y_ = knob_y_;
-    }
-
     const Switch sw = SwitchVal();
 
     // Every knob does something on every page, and between the two pages
@@ -896,14 +841,6 @@ class VoderCard : public ComputerCard {
     int32_t front =
         MidiOwns(g_state.front_from_midi) ? g_state.front : panel_front_;
 
-    // A random draw takes over until a control is moved, which then wins
-    // back in the ordinary way. Without that the button would be a
-    // one-frame flicker: the panel writes these every control block, so
-    // anything not latched is overwritten before it can be heard.
-    if (rand_active_) {
-      openness = rand_openness_;
-      front = rand_front_;
-    }
 
     // The formant CV moves openness up as front moves down. Sweeping both
     // together along one axis would mostly travel between two corners of
@@ -928,9 +865,8 @@ class VoderCard : public ComputerCard {
     // panel has no knob free for it, so with no controller attached the
     // card stays on the spread face of the cube - which is where the
     // ordinary unrounded vowels live, so nothing is lost.
-    int32_t round_amt =
+    const int32_t round_amt =
         MidiOwns(g_state.round_from_midi) ? g_state.round : panel_round_;
-    if (rand_active_) round_amt = rand_round_;
 
     // Three axes, eight corner vowels, trilinear between them. vowels.h.
     int32_t gains[kNumBands];
@@ -940,9 +876,8 @@ class VoderCard : public ComputerCard {
     // Multiplicative, so it cannot drive a band negative or pin one at
     // full scale - the additive version could do both, depending on the
     // vowel, and a band pinned at zero is a hole no control can reopen.
-    int32_t bright =
+    const int32_t bright =
         MidiOwns(g_state.bright_from_midi) ? g_state.bright : panel_bright_;
-    if (rand_active_) bright = rand_bright_;
     const int32_t tilt = bright - 16384;
 
     for (int i = 0; i < kNumBands; i++) {
@@ -1095,11 +1030,7 @@ class VoderCard : public ComputerCard {
   int32_t knob_main_, knob_x_, knob_y_;
   int32_t panel_openness_, panel_front_, panel_breath_;
   int32_t panel_pitch_, panel_bright_, panel_round_;
-  uint32_t last_plosive_, last_random_, rand_state_;
-  int32_t rand_openness_, rand_front_, rand_round_;
-  int32_t rand_pitch_, rand_bright_, rand_breath_;
-  int32_t rand_seen_main_, rand_seen_x_, rand_seen_y_;
-  bool rand_active_;
+  uint32_t last_plosive_;
   bool last_pulse1_;
   uint32_t load_acc_;
   int32_t load_count_, load_out_;

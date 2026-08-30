@@ -84,7 +84,6 @@ class State:
         self.volume_from_midi = 0
         self.muted = 0
         self.midi_mute = 0
-        self.random_count = 0
         self.freeze = 0
         self.breath_button_a = 0
         self.breath_button_d = 0
@@ -182,8 +181,6 @@ class Dispatch:
         if note == NOTE_MUTE:
             self.s.midi_mute = 1
             self.s.breath_button_a = 1
-        elif note == NOTE_RANDOM:
-            self.s.random_count += 1
         elif note == NOTE_PLOSIVE:
             self.s.plosive_count += 1
         elif note == NOTE_FREEZE:
@@ -327,14 +324,21 @@ def check_notes():
           f"{'ok' if good else 'FAIL'}")
     ok &= good
 
-    # Button 2 draws a new sound. Counted, so the ISR can diff it.
+    # Button 2 is deliberately unassigned. It drew a random voice
+    # briefly, and that came out after it jumped pitch by up to 1.6
+    # octaves per press and the 8mu was reported hanging while it was in
+    # use. The wide range was a plain error; the hang was never diagnosed,
+    # so removing the feature avoids it rather than fixes it. If a hang is
+    # ever seen on another button, this was not the cause.
     d2 = Dispatch()
+    before = vars(d2.s).copy()
     for _ in range(5):
         d2.note_on(NOTE_RANDOM, 100)
-    good = d2.s.random_count == 5
-    print(f"   button 2 pressed 5x -> count={d2.s.random_count}   "
-          f"{'ok - counted, not flagged' if good else 'FAIL'}")
-    ok &= good
+    good = vars(d2.s) == before
+    if not good:
+        ok = False
+    print(f"   button 2 pressed 5x -> nothing changes   "
+          f"{'ok - unassigned' if good else 'FAIL'}")
 
     # Button 3 fires plosives, unchanged.
     d3 = Dispatch()

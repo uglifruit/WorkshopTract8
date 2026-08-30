@@ -90,9 +90,6 @@ struct VoderState {
   // did it better.
   uint8_t midi_mute;
 
-  // Incremented by button 2. Counted, not flagged, for the same reason
-  // plosives are: a flag set on core 1 can be missed or double-read.
-  uint32_t random_count;
   uint8_t freeze;
   uint8_t midi_connected;
 
