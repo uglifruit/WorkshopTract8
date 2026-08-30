@@ -20,7 +20,8 @@
 //   CC 36  fader 3   BREATH     buzz <-> noise
 //   CC 37  fader 4   PITCH      F0, 50..500 Hz
 //   CC 38  fader 5   BRIGHT     spectral tilt
-//   CC 35, 39, 40    unassigned
+//   CC 35  fader 2   CLICK DECAY  short hit -> steady tone
+//   CC 39  fader 6   CLICK LEVEL
 //   CC 40  fader 7   VOLUME     base level
 //   CC 42/43         VOLUME TRIM  lift front/back, bipolar, adds to it
 //   CC 44/45         ROUND      lift left/right, bipolar

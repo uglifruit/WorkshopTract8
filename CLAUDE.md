@@ -1062,27 +1062,61 @@ counts against 132 before, with the worst case at 1568 of 2047.
 
 ## Still to do
 
-- [ ] Confirm volume and mute now behave - both were broken by the
-      same wrong assumption and both are unverified on hardware.
-- [ ] Confirm the vowel CUBE is playable, and that rounding on the
-      left/right tilt is a gesture that can be held steady while the
-      faders move. If it fights the volume tilt, the two axes may
-      need swapping.
-- [ ] Confirm the 2-D square underneath is still playable - that is
-      the whole point of v1.3.0 and it is untested on hardware.
-- [ ] Confirm the lockup is actually gone — it took sustained fader plus
-      accelerometer traffic to provoke, so try to reproduce it deliberately.
-- [ ] Read CV Out 2 for the real DSP load. Still unmeasured.
-- [ ] If anything is ever silent again,
-      hold the switch down and read LEDs 0–3 (see the diagnostic table
-      above) — that identifies which condition is at fault immediately.
-- [ ] If LED 1 is lit with nothing patched, `kExtGateLevel` is too low for
-      this unit's ADC noise floor; raise it.
-- [ ] If LED 0 is lit, the gate latch is being tripped by noise on Pulse
-      In 2; `gate_seen_` needs a debounce or a threshold.
-- [ ] Read CV Out 2 and replace the 44.2% prediction with the measurement.
-- [ ] Confirm an actual 8mu enumerates and that CC 34–41 move the right bands.
-- [ ] Listen for whether Q=4 is right. It is a guess balancing band separation
-      against ringing on plosives, and only ears can settle it.
-- [ ] Consider whether the six vowels want to be more, or whether a
-      continuous F1/F2 model would beat a table.
+Confirmed on hardware over the bench sessions: the card enumerates an 8mu
+and CC 34-41 move the right controls; the vowel cube and the square under
+it are playable; volume behaves; the output is clean at the current gain.
+
+Genuinely open:
+
+- [ ] **Read CV Out 2 and replace `budget_check.py`'s 44.2% prediction
+      with the measurement.** The script says loudly that it is a model,
+      and WorkshopSpectral modelled 51% against 231% measured. The
+      firmware computes the real figure and puts it on the jack; nobody
+      has read it yet.
+- [ ] Confirm the USB lockup is gone. It took sustained fader plus
+      accelerometer traffic to provoke, so it needs deliberate
+      reproduction rather than absence of reports. Three separate causes
+      have been fixed (unbounded drain, wedged endpoint, stale address)
+      and any of them could have been the one being hit.
+- [ ] Listen for whether Q=4 is right. It is a guess balancing band
+      separation against ringing on plosives, and only ears settle it.
+- [ ] Consider whether a continuous F1/F2 model would beat the table.
+
+If the card is ever silent again, hold the switch down and read LEDs 0-3
+(see the diagnostic table above) - that identifies which of the four
+conditions is at fault without another round trip. If LED 1 is lit with
+nothing patched, `kExtGateLevel` is below this unit's ADC noise floor. If
+LED 0 is lit, noise on Pulse In 2 is tripping the gate latch and
+`gate_seen_` needs a threshold.
+
+## What the bench taught, in one line each
+
+Every one of these cost a flash cycle, and each is a general lesson rather
+than a fact about this card:
+
+1. **A DSP test suite can be entirely green while the signal never
+   arrives.** Five suites passed while the card was mute.
+2. **Static initialisation order is not something to be careful about, it
+   is something to design out.**
+3. **Do not put work in a USB callback.** It runs with the endpoint
+   disarmed.
+4. **When a control seems to do nothing at all, suspect the mapping before
+   the wiring** - and when the mapping is a guess about someone else's
+   hardware, ask rather than infer. Six versions of the accelerometer, all
+   settled by one sentence from the player.
+5. **Smooth at the rate the signal is sampled, not the rate the control
+   changes.**
+6. **A filter's state must be higher precision than its output**, or
+   `(delta >> n)` of a small delta is zero and it stalls exactly where the
+   noise lives.
+7. **A control that MULTIPLIES needs smoothing that a control which ADDS
+   does not.**
+8. **Any control read on a divider must be locked to the rate the hardware
+   actually updates it at**, or the two beat.
+9. **A saturating curve must have a linear region big enough for the
+   signal that normally passes through it.** A cubic has none.
+10. **Size an output stage from the measured PEAK, not from a model's
+    average.** The model was optimistic by 2x.
+11. **The discriminating question beats another theory.** "Does it happen
+    with no 8mu?" and "does audio into Audio In 1 change it?" each
+    eliminated more than any simulation written that day.

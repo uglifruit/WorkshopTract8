@@ -18,3 +18,7 @@ __pycache__/
 
 # Rendered reference audio from the tools, if any is ever generated.
 tools/*.wav
+
+# Bisection builds from bench debugging. Useful while chasing a fault,
+# never part of a release - each one deliberately breaks something.
+DIAGNOSTIC/

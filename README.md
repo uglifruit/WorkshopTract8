@@ -237,6 +237,24 @@ above 4 kHz a hi-hat; a real /p/ is neither. The default is 12 ms and about
 18 dB under the voice — punctuation, not percussion — with fader 6 reaching
 above the voice for a deliberate hit.
 
+## Output level
+
+An ordinary vowel peaks around 2.8 V, with momentary peaks near 4.2 V, on
+outputs that reach ±6 V.
+
+That last stretch is deliberately not used. The output stage is a limiter
+with a hard knee: below 4.4 V it is **exactly** linear — not approximately,
+bit-for-bit — so everything you actually play passes through undistorted,
+and only genuine transients bend, landing gently rather than clipping flat.
+
+The gain is set so that peaks stay inside the linear region. An earlier
+version used a cubic soft clipper, which sounds like the gentler choice and
+is not: a cubic curves from the very first sample, so it has no linear
+region at all and distorts *everything* rather than just the peaks. It
+measured 28 dB of THD on a normal vowel and was audible as a whine that
+tracked the volume and brightness controls. The same vowel now measures
+92 dB down.
+
 ## Reading the DSP load
 
 CV Out 2 outputs measured microseconds per sample against the 20.83 µs
