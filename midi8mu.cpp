@@ -135,8 +135,11 @@ static void HandleCc(uint8_t cc, uint8_t v) {
       return;
 
     case kCcVolume:
-      // Fader 7 sets the base volume; the tilt swings around it.
+      // Fader 7 sets the base volume; the tilt swings around it. The
+      // fader's own value is published separately so BABBLE can use it
+      // without the tilt - see volume_fader in shared.h.
       s_vol_fader = CcToQ15(v);
+      g_state.volume_fader = s_vol_fader;
       UpdateVolume();
       return;
 

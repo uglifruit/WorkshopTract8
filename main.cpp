@@ -218,6 +218,8 @@ class VoderCard : public ComputerCard {
     g_state.round = 0;
     g_state.round_from_midi = 0;
     g_state.volume = 32767;
+    // Full, so BABBLE is not silent before fader 7 is first moved.
+    g_state.volume_fader = 32767;
     g_state.volume_from_midi = 0;
     g_state.muted = 0;
     g_state.breath_button_a = 0;
@@ -463,15 +465,14 @@ class VoderCard : public ComputerCard {
     // The 8mu no longer gates the sources separately - button 1 is a
     // mute now, and breath already covers the buzz/noise balance better
     // than two buttons could.
-    if (babble_) {
-      // In BABBLE the syllable gate IS the envelope, so a held input gate
-      // becomes a stream of spoken syllables rather than one long tone.
-      p.voiced_level = babble_open_ ? 32767 : 0;
-      p.noise_level = babble_open_ ? 32767 : 0;
-    } else {
-      p.voiced_level = ext_gate ? 32767 : 0;
-      p.noise_level = ext_gate ? 32767 : 0;
-    }
+    // Button 2 overrides the syllable gate, so holding it sustains rather
+    // than chatters. It is the only control that does; everything else
+    // goes through the same envelope.
+    const bool open = g_state.midi_gate ? true
+                    : babble_           ? babble_open_
+                                        : ext_gate;
+    p.voiced_level = open ? 32767 : 0;
+    p.noise_level = open ? 32767 : 0;
 
     // Click level and decay.
     //
@@ -548,10 +549,16 @@ class VoderCard : public ComputerCard {
     //
     // AUTO-CHATTER supplies its own gate when engaged, so the same code
     // path runs whether the gate came from a jack or from here.
-    const bool chatter_gate = auto_chatter_
-                                  ? AutoChatterGate()
-                                  : (pulse1 || PulseIn2() ||
-                                     g_state.midi_gate);
+    // Button 2 is NOT in the chatter gate.
+    //
+    // It opens the voice continuously instead, which is what a finger on
+    // a button means. A gate from a sequencer is a stream of events and
+    // should chatter; a held button is one sustained intent and should
+    // not. Treating them identically was a too-literal reading of "make
+    // it work as a gate in at Pulse In 2", and the result was a button
+    // that stuttered while held.
+    const bool chatter_gate = auto_chatter_ ? AutoChatterGate()
+                                            : (pulse1 || PulseIn2());
 
     if (babble_ && chatter_gate) {
       const int32_t period =
@@ -633,7 +640,17 @@ class VoderCard : public ComputerCard {
     // phrase without needing the patch to control absolute level. With no
     // 8mu the base is full, so a negative CV ducks from full and a
     // positive one is simply already at the ceiling.
-    int32_t vol = MidiOwns(g_state.volume_from_midi) ? g_state.volume : 32767;
+    // In BABBLE the tilt does NOT touch the volume - the fader alone
+    // sets it.
+    //
+    // The assumption in the main mode is that you want sound: a card that
+    // can be silenced by holding the controller at the wrong angle is
+    // working against its player. The tilt still drives volume in the
+    // deliberate mode, where the whole point is fine manual control and
+    // the player has chosen that.
+    int32_t vol = MidiOwns(g_state.volume_from_midi)
+                      ? (babble_ ? g_state.volume_fader : g_state.volume)
+                      : 32767;
     if (Connected(Input::Audio2)) {
       vol += (int32_t)AudioIn2() << 4;
     }
@@ -901,7 +918,21 @@ class VoderCard : public ComputerCard {
       int32_t factor = 32768 + (int32_t)(((int64_t)tilt * pos) >> 3);
       if (factor < 0) factor = 0;
       int32_t g = (int32_t)(((int64_t)gains[i] * factor) >> 15);
-      g_state.band_gain[i] = Clamp15(g);
+      // SLEWED, not stepped.
+      //
+      // These are recomputed at 125 Hz, and an accelerometer streaming
+      // continuously moves the vowel on every single update. Writing them
+      // straight through puts a step in eight gains at once every 8 ms,
+      // and a step in a multiplier is a corner in the output - broadband,
+      // and heard as high-frequency noise while a tilt is moving. That is
+      // a zipper, and it was reported as exactly that.
+      //
+      // A quarter of the distance per update reaches the target in about
+      // 30 ms, which is faster than a hand moves and slow enough that no
+      // single update is audible as an edge.
+      const int32_t target = Clamp15(g);
+      const int32_t cur = g_state.band_gain[i];
+      g_state.band_gain[i] = cur + ((target - cur) >> 2);
     }
   }
 

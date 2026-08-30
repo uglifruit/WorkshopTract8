@@ -65,7 +65,12 @@ struct VoderState {
   // Front/back tilt is VOLUME: the one control that wants to be a gesture
   // rather than a setting. Rests at unity so a controller lying flat is at
   // full volume.
-  int32_t volume;        // Q15, 32767 = unity
+  int32_t volume;        // Q15, 32767 = unity - fader plus tilt
+
+  // The fader's contribution alone, without the tilt. BABBLE uses this so
+  // that holding the controller at an angle cannot silence the card in
+  // the mode whose assumption is that you want sound.
+  int32_t volume_fader;
   uint8_t volume_from_midi;
 
   // Set while the 8mu is upside down (CC 49). Hard mute - turning the

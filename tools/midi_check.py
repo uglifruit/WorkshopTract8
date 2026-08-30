@@ -633,15 +633,15 @@ def check_callback_does_not_parse():
             r += 1
         return r
 
-    wrote = push(256)
-    good = wrote == 256
+    wrote = push(64)
+    good = wrote == 64
     if not good:
         ok = False
-    print(f"   a full callback's worth ({wrote} bytes) fits   "
+    print(f"   one endpoint's worth ({wrote} bytes) fits   "
           f"{'ok' if good else 'FAIL'}")
 
     read = drain()
-    good = read == 256
+    good = read == 64
     if not good:
         ok = False
     print(f"   the loop drains all {read}   {'ok' if good else 'FAIL'}")
@@ -660,7 +660,7 @@ def check_callback_does_not_parse():
     # And it must survive sustained traffic without drifting.
     head = tail = 0
     for _ in range(50):
-        push(256)
+        push(64)
         drain()
     good = head == tail
     if not good:

@@ -66,7 +66,8 @@ uint8_t s_have_data1 = 0;
 // two turns of a loop that does nothing else. Written by the callback,
 // read by the loop, both on core 1, so no atomics are needed - but the
 // indices are volatile because the callback runs from interrupt context.
-constexpr uint32_t kRxRingSize = 2048;
+constexpr uint32_t kRxRingSize = 2048;          // power of two
+constexpr uint32_t kRxRingMask = kRxRingSize - 1;
 uint8_t s_rx_ring[kRxRingSize];
 volatile uint32_t s_rx_head = 0;
 volatile uint32_t s_rx_tail = 0;
@@ -143,20 +144,27 @@ void tuh_midi_umount_cb(uint8_t dev_addr, uint8_t instance) {
 
 // Maximum bytes drained per callback.
 //
-// This bound is the whole point of the constant. The obvious loop here is
-// "read until the stream returns nothing", and it hangs the card: an 8mu
-// held in the hand streams accelerometer CCs continuously, and it can
-// refill the endpoint as fast as this loop empties it. The read never
-// returns 0, the callback never returns, tuh_task() is never called again
-// and USB stops being serviced entirely. The card appears to lock up under
-// heavy MIDI - which is exactly what was reported from hardware.
+// ONE endpoint's worth, not four. The IN endpoint delivers at most
+// ep_in_max - 64 bytes on a full-speed bulk endpoint - per transfer, and
+// this callback runs once per transfer, so 64 is all that can have arrived
+// since the last one. The previous 256 was chosen to "drain generously"
+// and that was simply wrong: the extra iterations only ran
+// tuh_midi_stream_read() again on an empty FIFO, paying its packet-parsing
+// overhead three more times for nothing.
 //
-// 256 bytes is 85 complete channel-voice messages, far more than an 8mu
-// generates between two calls of tuh_task(). Anything left over is not
-// dropped: it stays in the endpoint buffer and arrives on the next
-// callback, a fraction of a millisecond later. Bounding the work per
-// callback is what keeps the task pump turning.
-static constexpr uint32_t kMaxRxBytesPerCallback = 256;
+// That overhead is the point. tuh_midi_stream_read() is not a memcpy - it
+// peeks the FIFO, decodes USB-MIDI packets four bytes at a time, tracks
+// sysex state and copies out. All of that happens inside midih_xfer_cb(),
+// BEFORE it re-arms the IN endpoint with usbh_edpt_xfer(). If the next
+// packet arrives first the transfer errors, the driver's TU_ASSERT returns
+// early, and the endpoint is never re-armed - the host stops polling and
+// the device re-enumerates.
+//
+// The 8mu was still occasionally cycling its LEDs as though it had just
+// been plugged in, which is what a re-enumeration looks like from the
+// outside. Moving the MIDI parsing out of the callback was necessary but
+// not sufficient; the driver's own packet parsing had to be bounded too.
+static constexpr uint32_t kMaxRxBytesPerCallback = 64;
 
 void tuh_midi_rx_cb(uint8_t dev_addr, uint32_t num_packets) {
   if (s_dev_addr != dev_addr || num_packets == 0) return;
@@ -173,7 +181,7 @@ void tuh_midi_rx_cb(uint8_t dev_addr, uint32_t num_packets) {
 
     uint32_t head = s_rx_head;
     for (uint32_t i = 0; i < n; i++) {
-      const uint32_t next = (head + 1) % kRxRingSize;
+      const uint32_t next = (head + 1) & kRxRingMask;
       if (next == s_rx_tail) break;   // full: drop rather than block
       s_rx_ring[head] = buf[i];
       head = next;
@@ -206,7 +214,7 @@ extern "C" void core1_entry(void) {
     // the callback is the whole point - see s_rx_ring.
     while (s_rx_tail != s_rx_head) {
       ParseByte(s_rx_ring[s_rx_tail]);
-      s_rx_tail = (s_rx_tail + 1) % kRxRingSize;
+      s_rx_tail = (s_rx_tail + 1) & kRxRingMask;
     }
   }
 }

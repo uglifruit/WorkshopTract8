@@ -119,18 +119,19 @@ Plug it into the front USB-C jack. Nothing to configure — the card reads the
 | Fader 5 | CC 38 | Brightness — spectral tilt |
 | Fader 6 | CC 39 | Click level |
 | **Fader 7** | CC 40 | **Volume** — base level |
-| Lift back / front | CC 43 / 42 | **Volume** — back swells, front ducks |
+| Lift back / front | CC 43 / 42 | **Volume** — back swells, front ducks *(deliberate mode only)* |
 | Lift left / right | CC 44 / 45 | **Rounding** — the third vowel axis |
 | **Button 1** | Note 36 (C2) | **Mute** while held |
-| **Button 2** | Note 48 (C3) | **Gate** — exactly as a cable in Pulse In 2 |
+| **Button 2** | Note 48 (C3) | **Gate** — sustains the voice while held |
 | **Button 3** | Note 60 (C4) | Plosive burst |
 | **Button 4** | Note 72 (C5) | **Freeze** the formants while held |
 
 Channel-agnostic — set the 8mu to any channel.
 
-**Button 2 is a gate.** Holding it is indistinguishable from a gate patched
-into Pulse In 2 — it opens the voice, and in BABBLE it starts the chatter. So
-the card can be played from the 8mu alone, with nothing in the jacks.
+**Button 2 is a gate.** Holding it opens the voice and keeps it open, so the
+card can be played from the 8mu alone with nothing in the jacks. Unlike a
+gate patched into Pulse In 2 it does *not* chatter in BABBLE — a sequencer
+gate is a stream of events, a finger on a button is one sustained intent.
 
 **Button 4 freezes while held, and every LED goes to half brightness while
 it does.** Freeze stops openness, front, rounding and the vowel morph all at
@@ -168,6 +169,11 @@ The accelerometer reports **lift** gestures — zero when level — so a
 controller lying flat sits exactly where the fader says. The response is
 squared, so a quarter lift costs only 0.6 dB: holding it roughly level is
 fine.
+
+**In BABBLE the tilt does not touch the volume at all** — fader 7 alone sets
+it. The assumption in the main mode is that you want sound, and a card that
+can be silenced by holding the controller at the wrong angle is working
+against its player.
 
 ---
 
