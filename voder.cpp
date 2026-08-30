@@ -112,6 +112,8 @@ void Voder::Init(uint32_t seed) {
   phase_inc_ = 0;
   rng_ = seed ? seed : 0xDEADBEEFu;  // xorshift must never be zero
   plosive_ = 0;
+  plosive_lp1_ = 0;
+  plosive_lp2_ = 0;
   plosive_len_ = kPlosiveSamples;
   plosive_hold_ = false;
   gate_env_ = 0;
@@ -332,25 +334,41 @@ int32_t __not_in_flash_func(Voder::Process)(const Params& p) {
     const int32_t env = plosive_hold_
                         ? 32767
                         : (plosive_ << 15) / plosive_len_;
-    const int32_t burst = ((int32_t)(Random() >> 16)) - 32768;
+    // The burst is LOWPASSED, not raw noise.
+    //
+    // Raw white noise was reported as sounding like white noise rather
+    // than like a P or a B, which is exactly right: a bilabial release
+    // puts nearly all its energy below 1 kHz. Two one-pole sections give
+    // -12 dB/octave above about 700 Hz, which lands -14 dB at 1-4 kHz and
+    // -34 dB above 4 kHz relative to the low end. See kPlosiveLpQ15.
+    //
+    // The filter runs continuously rather than only during a burst, so it
+    // is already settled when one starts - a filter starting from zero
+    // state produces a click of its own at the very moment the burst is
+    // meant to be shaping one.
+    const int32_t raw = ((int32_t)(Random() >> 16)) - 32768;
+    plosive_lp1_ += (int32_t)(((int64_t)(raw - plosive_lp1_) *
+                               kPlosiveLpQ15) >> 15);
+    plosive_lp2_ += (int32_t)(((int64_t)(plosive_lp1_ - plosive_lp2_) *
+                               kPlosiveLpQ15) >> 15);
+    const int32_t burst = plosive_lp2_;
 
     // Scaled by the click level so the burst can be balanced against the
-    // voice. It was fixed at full and reported as too loud.
+    // voice.
     const int32_t lvl = (int32_t)(((int64_t)env * p.click_level) >> 15);
-    // >>19, not >>17.
+
+    // >>16 here rather than the >>19 the unfiltered burst needed: the
+    // two-pole lowpass throws away about 16 dB of level on its own, so
+    // keeping the old shift would have made the click inaudible.
     //
-    // The click is summed after the filter bank, so it is never attenuated
-    // by the vowel the way the voice is - and the voice arrives here at
-    // roughly a fifth of its nominal level, because a real vowel opens
-    // only a few bands. At >>17 a "-14 dB" click default actually landed
-    // 1.5 dB BELOW the voice, which is to say level with it: the -14 dB
-    // was relative to the click's own full scale rather than to anything
-    // audible. Reported twice as still far too percussive, correctly.
-    //
-    // >>19 puts the default 13.5 dB under the voice, which is punctuation,
-    // while fader 6 at full still reaches parity for when a loud click is
-    // wanted. Measured in tools/chain_check.py.
-    sum += (int32_t)(((int64_t)burst * lvl) >> 19);
+    // The shift sets the fader's RANGE and kDefaultClickLevel sets where
+    // it sits without an 8mu. Those are separate decisions and were
+    // briefly conflated: >>17 gave a suitably quiet default but capped
+    // the fader at -3.3 dB, so the loud-click option disappeared. Keeping
+    // the range here and lowering the default instead gives both - a
+    // default 18 dB under the voice, and a fader that still reaches
+    // slightly above it for a deliberate hit.
+    sum += (int32_t)(((int64_t)burst * lvl) >> 16);
 
     if (!plosive_hold_) plosive_--;
   }

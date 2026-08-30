@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """BABBLE alt-boot: does one gate and three knobs actually chatter?
 
-Hold the switch DOWN at power-on. Each knob then drives several parameters
-at once, so the card talks from a single sustained gate with no controller
-attached. Normal mode maps one knob to one parameter, which is right for
-playing deliberately and wrong for getting a texture going quickly.
+BABBLE IS THE DEFAULT MODE - just turn the card on. Holding the switch DOWN
+at power-on gives the deliberate one-knob-one-parameter mode instead.
+
+They were the other way round at first. The macro mode is what the card is
+for, and a card should do its most characteristic thing when you simply
+switch it on rather than requiring a gesture to reach it.
+
+Each knob drives several parameters at once, so the card talks from a
+single sustained gate with no controller attached.
 
   MAIN  vowel diagonal + pitch      one knob walks through vowels
   X     chatter rate + brightness   fast and bright together
@@ -121,7 +126,7 @@ def period_samples(q15):
 
 
 def check_boot_detection():
-    """The trap two sibling cards fell into."""
+    """The trap two sibling cards fell into, and it cuts both ways."""
     print("\n1. The mode is read ONCE, after the full boot window")
     ok = True
 
@@ -131,27 +136,33 @@ def check_boot_detection():
     settle = 46 * FS // 1000
     readings = ['Down' if n < settle else 'Up' for n in range(BOOT_MUTE)]
 
-    # WRONG: latch on any sighting of Down.
-    latched = any(r == 'Down' for r in readings)
-    print(f"   'Down seen at any point'  -> babble={latched}   "
-          f"{'<-- WRONG, latches on every boot' if latched else ''}")
+    # WRONG: latch on any sighting of Down. Now that BABBLE is the default
+    # this would drop every boot into the ALT mode, which is if anything
+    # more confusing than the other way round - the card would refuse to
+    # do its main trick and nothing on the panel would say why.
+    latched_alt = any(r == 'Down' for r in readings)
+    print(f"   'Down seen at any point' -> alt mode={latched_alt}   "
+          f"{'<-- WRONG, every boot lands in ALT' if latched_alt else ''}")
 
-    # RIGHT: one reading, at the end of the window.
-    once = readings[-1] == 'Down'
-    good = not once
+    # RIGHT: one reading, at the end of the window. babble_ = (sw != Down).
+    once_babble = readings[-1] != 'Down'
+    good = once_babble
     if not good:
         ok = False
-    print(f"   one reading after {BOOT_MUTE} samples -> babble={once}   "
-          f"{'ok - switch was Up, mode is normal' if good else 'FAIL'}")
+    print(f"   one reading after {BOOT_MUTE} samples -> babble={once_babble}   "
+          f"{'ok - plain power-on gives BABBLE' if good else 'FAIL'}")
 
-    # And the same test with the switch genuinely held Down must detect it.
+    # And holding Down must reach the alt mode.
     held = ['Down'] * BOOT_MUTE
-    good = held[-1] == 'Down'
+    alt = (held[-1] == 'Down')
+    good = alt
     if not good:
         ok = False
-    print(f"   switch genuinely held Down -> babble={held[-1] == 'Down'}   "
+    print(f"   switch genuinely held Down -> alt mode={alt}   "
           f"{'ok' if good else 'FAIL'}")
-    print("   (WorkshopZX and WorkshopBio both shipped the latching bug)")
+    print("   (WorkshopZX and WorkshopBio both shipped the latching bug;")
+    print("    the single reading is what protects BOTH senses, which is")
+    print("    why swapping the default round needed no other change)")
     return ok
 
 

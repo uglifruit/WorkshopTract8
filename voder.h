@@ -60,6 +60,21 @@ static constexpr int32_t kPlosiveSamples = 384;  // 8 ms at 48 kHz
 // as punctuation.
 static constexpr int32_t kPlosiveMaxSamples = 48000;  // 1 s at 48 kHz
 
+// Plosive lowpass coefficient, Q15. Two of these cascade, giving
+// -12 dB/octave above a corner near 700 Hz.
+//
+// The burst was raw white noise, flat to Nyquist, and reported as sounding
+// like white noise rather than like speech - correctly. A real bilabial
+// release (/p/, /b/) puts nearly all its energy below 1 kHz and falls
+// steeply above that; it is the alveolars (/t/, /d/) that are bright, and
+// this card only has one burst so it should be the dark one. The bright
+// version reads as a hi-hat.
+//
+// Measured with this filter: -14 dB at 1-4 kHz and -34 dB above 4 kHz,
+// relative to the sub-1 kHz energy. A real /p/ sits around -15 to -25 dB
+// at 4 kHz, so this is in the right territory.
+static constexpr int32_t kPlosiveLpQ15 = 3000;
+
 // Glottal gate ramp, samples. Gating the buzz with a hard edge clicks
 // audibly; 2 ms of linear ramp removes it without slurring the attack.
 static constexpr int32_t kGateRamp = 96;  // 2 ms at 48 kHz
@@ -135,6 +150,8 @@ class Voder {
   uint32_t phase_inc_;      // Q32 increment
   uint32_t rng_;
   int32_t  plosive_;        // samples remaining in the burst
+  int32_t  plosive_lp1_;    // two-pole lowpass state for the burst
+  int32_t  plosive_lp2_;
   int32_t  plosive_len_;    // length this burst was started with
   bool     plosive_hold_;   // true while sustaining at full decay
   int32_t  gate_env_;       // Q15, smoothed voiced gate

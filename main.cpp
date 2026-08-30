@@ -120,7 +120,7 @@ static constexpr int32_t kPlosiveChance = 70;         // ~27%
 // it dominates the card completely, which is how it shipped and how it was
 // reported. This sits it under the voice as punctuation. Fader 6 reaches
 // full for when a loud one is wanted.
-static constexpr int32_t kDefaultClickLevel = 6500;
+static constexpr int32_t kDefaultClickLevel = 3000;
 
 // Default click decay with no 8mu attached, Q15. Short - a consonant, not
 // a wash. Maps to roughly 30 ms through the squared curve in voder.cpp.
@@ -359,7 +359,20 @@ class VoderCard : public ComputerCard {
       // decrement so the last sample is included. See kBabbleLfoRate for
       // why this is not "Down seen at any point".
       if (boot_mute_ == 0) {
-        babble_ = (SwitchVal() == Switch::Down);
+        // BABBLE IS THE DEFAULT; holding Down at power-on gives the
+        // one-knob-one-parameter mode instead.
+        //
+        // Swapped round after playing: the macro mode is what the card is
+        // for, and the deliberate mode is the specialist one. A card
+        // should do its most characteristic thing when you simply turn it
+        // on, not require a gesture to reach it.
+        //
+        // The single-reading discipline protects both senses equally: the
+        // switch reads Down until it settles (~46 ms), and this reading
+        // happens once after the full 0.5 s window, so an unsettled read
+        // cannot leak into either mode. Latching on "Down seen at any
+        // point" would have been fatal in EITHER direction.
+        babble_ = (SwitchVal() != Switch::Down);
       }
       AudioOut1(0);
       AudioOut2(0);
@@ -877,10 +890,14 @@ class VoderCard : public ComputerCard {
         const int32_t step = (kBootSplash - boot_splash_) >> 12;
         for (int i = 0; i < 6; i++) LedOn(i, (step % 6) == i);
       } else {
-        // Mode is known. Even LEDs for normal, odd for BABBLE - the
-        // NIBBLE-KO convention and its idiom. The splash runs on past the
-        // end of the mute so this is readable before the card speaks.
-        for (int i = 0; i < 6; i++) LedOn(i, ((i & 1) == 1) == babble_);
+        // Mode is known. EVEN LEDs for the default mode, odd for the
+        // alt-boot one - the NIBBLE-KO convention and its idiom. Since
+        // BABBLE is now the default, even means BABBLE: the test is
+        // against !babble_ so that a plain power-on lights the pattern
+        // that reads as "normal", whichever mode that happens to be.
+        // The splash runs on past the end of the mute so this is readable
+        // before the card speaks.
+        for (int i = 0; i < 6; i++) LedOn(i, ((i & 1) == 1) == !babble_);
       }
       return;
     }

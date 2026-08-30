@@ -26,6 +26,7 @@ Checks:
   4. Headroom: worst case must not overflow int32 or clip the DAC.
   5. The click sits under the voice, measured against the VOICE.
   6. Breath changes the character of the sound, not its level.
+  7. The plosive is dark enough to read as a stop, not as noise.
 
 Run: python tools/chain_check.py
 """
@@ -197,8 +198,10 @@ def check_headroom():
 
 
 # Click gain staging, transcribed from voder.cpp.
-CLICK_SHIFT = 19
-DEFAULT_CLICK_LEVEL = 6500      # main.cpp, no 8mu attached
+CLICK_SHIFT = 16
+PLOSIVE_LP_Q15 = 3000        # two cascaded one-poles, ~700 Hz corner
+PLOSIVE_LP_LOSS_DB = -15.9   # measured RMS loss through the pair
+DEFAULT_CLICK_LEVEL = 3000      # main.cpp, no 8mu attached
 VOWEL_BAND_FRACTION = sum(VOWEL_AH) / (8 * 32767)
 
 
@@ -208,7 +211,71 @@ def voice_at_sum():
 
 
 def click_at_sum(level):
-    return (32768 * level) >> CLICK_SHIFT
+    """Peak contribution of a burst at the summing point.
+
+    The two-pole lowpass that darkens the burst also costs about 16 dB of
+    level, which is why the shift is >>17 here where an unfiltered burst
+    needed >>19. Both numbers have to move together: keeping the old shift
+    with the filter added would have made the click inaudible.
+    """
+    raw = (32768 * level) >> CLICK_SHIFT
+    return raw * (10 ** (PLOSIVE_LP_LOSS_DB / 20.0))
+
+
+def check_plosive_spectrum():
+    """A P or a B is not white noise."""
+    print("\n7. The plosive is dark, like a bilabial stop")
+    ok = True
+
+    # Two cascaded one-poles, run on white noise, measured in bands.
+    rng = np.random.default_rng(1)
+    n = 8192
+    x = rng.integers(-32768, 32767, n).astype(float)
+    a = PLOSIVE_LP_Q15 / 32768.0
+    y1 = y2 = 0.0
+    y = np.zeros(n)
+    for i, v in enumerate(x):
+        y1 += (v - y1) * a
+        y2 += (y1 - y2) * a
+        y[i] = y2
+
+    spec = np.abs(np.fft.rfft(y * np.hanning(n)))
+    freqs = np.fft.rfftfreq(n, 1.0 / FS)
+
+    def band(lo, hi):
+        m = (freqs >= lo) & (freqs < hi)
+        return float(np.sqrt(np.mean(spec[m] ** 2)))
+
+    low = band(100, 1000)
+    mid = band(1000, 4000)
+    high = band(4000, 12000)
+    mid_db = 20 * math.log10(mid / low)
+    high_db = 20 * math.log10(high / low)
+
+    print(f"   below 1 kHz    {0.0:+6.1f} dB   (reference)")
+    print(f"   1-4 kHz        {mid_db:+6.1f} dB")
+    print(f"   4-12 kHz       {high_db:+6.1f} dB")
+
+    # A real /p/ sits about -15 to -25 dB at 4 kHz relative to its low
+    # peak. Raw white noise would read 0 dB in every band, which is what
+    # it did before and why it sounded like a hi-hat rather than a stop.
+    good = mid_db < -8.0 and high_db < -25.0
+    if not good:
+        ok = False
+    print(f"   dark enough to read as /p/ or /b/   "
+          f"{'ok' if good else '<-- STILL BRIGHT'}")
+    print("   (white noise reads 0 dB in every band; the alveolars /t/ and")
+    print("    /d/ ARE bright, but this card has one burst so it should be")
+    print("    the dark one - a bright one sounds like a hi-hat)")
+
+    # The filter must not have a DC offset, which would click on its own.
+    dc = abs(float(np.mean(y))) / float(np.sqrt(np.mean(y ** 2)))
+    good = dc < 0.05
+    if not good:
+        ok = False
+    print(f"   DC offset {dc*100:.1f}% of RMS   "
+          f"{'ok' if good else '<-- WOULD CLICK'}")
+    return ok
 
 
 def check_click_balance():
@@ -291,6 +358,7 @@ def main():
     ok &= check_headroom()
     ok &= check_click_balance()
     ok &= check_breath_is_a_ratio()
+    ok &= check_plosive_spectrum()
 
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1

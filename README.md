@@ -184,10 +184,11 @@ Breath has no CV input, because it has three physical routes already
 mounted. LED 5 shows voiced (bright) versus unvoiced (dim), or full brightness
 while frozen.
 
-## BABBLE mode (alt-boot)
+## BABBLE mode (the default)
 
-**Hold the switch down at power-on.** The boot LEDs light odd instead of
-even to confirm it.
+**Just turn the card on.** BABBLE is what it does out of the box — holding
+the switch down at power-on gives the deliberate one-knob-one-parameter
+mode instead, with odd boot LEDs to confirm.
 
 Each knob then drives several things at once, so the card talks from a
 single sustained gate with nothing else patched:
@@ -233,8 +234,9 @@ you want consonants on top, patch them into **Pulse In 1**, which triggers
 clicks in every mode. That way the percussion is a choice rather than
 something the mode imposes on every syllable.
 
-Normal mode is one knob per parameter, which is right for playing
-deliberately. This is for getting a texture going in seconds.
+The alt-boot mode is one knob per parameter, which is right for playing
+deliberately. BABBLE is for getting a texture going in seconds, and it is
+the default because it is what the card is for.
 
 ## Why the vowel morph is not alphabetical
 
