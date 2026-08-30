@@ -177,7 +177,7 @@ against its player.
 | Pulse In 2 | **Glottal gate** |
 | Audio Out 1 / 2 | Mono output, same signal on both |
 | CV Out 1 | Formant energy envelope |
-| CV Out 2 | Measured DSP load |
+| CV Out 2 | Vowel position — the openness axis, 0–5 V |
 | Pulse Out 1 | High while voiced |
 | Pulse Out 2 | High while frozen |
 

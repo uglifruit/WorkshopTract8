@@ -11,6 +11,29 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
+## CV Out 2 became the vowel (v1.24.0)
+
+The load meter did its job and then stopped being worth a jack.
+
+It read ~100% of budget against a model predicting 44.2%, which is what
+found the int64 filter bank. After the rewrite it read **3.0 V typical,
+3.5 V peak - 60% and 70%**, or 12.5 and 14.6 us against the 20.83 us
+deadline, with the sound unchanged. A number that is not going to change
+again does not earn an output on a card with two.
+
+CV Out 2 now carries the **openness axis of the vowel cube**, 0-5 V closed
+to open, taken after the 8mu takeover, the formant CV and the babble
+animation - so it reports the vowel actually being sounded rather than
+where any one control sits. In BABBLE and auto-chatter it wanders on its
+own, which makes it a modulation source musically RELATED to what is being
+heard rather than an unrelated LFO.
+
+The timing code went with it. It was two `time_us_32()` reads and a divide
+per sample computing something nothing looked at. To measure again, put it
+back around the ISR body - and note the measurement was trustworthy:
+`time_us_32()` has only 1 us resolution against a 20.83 us budget, but the
+truncation is unbiased and it accumulates over 256 samples.
+
 ## CV Out 2 read 5 V: the bank was 64-bit for no reason (v1.23.0)
 
 The measurement the log kept asking for, finally taken, and it said what
@@ -53,6 +76,10 @@ worst case at 1568.
 `filter_check.py` now carries both bounds as a permanent check, because
 this is exactly the kind of change that looks fine for months and then
 detonates on one unusual input.
+
+**Measured after the rewrite: 3.0 V typical, 3.5 V peak - 60% and 70% of
+budget**, or 12.5 and 14.6 us against the 20.83 us deadline. From clamped
+at 100% to 6 us of headroom at the worst, with the sound unchanged.
 
 **The rule: `int64` on an M0+ is a function call, not an instruction.**
 Reach for it only when a bound has been computed and genuinely exceeds
@@ -788,10 +815,11 @@ component under test cannot find a bug in the model.*
 `tools/budget_check.py` is a **model, not a measurement**, and it says so
 loudly. WorkshopSpectral modelled 51% and measured 231% on real silicon.
 **CV Out 2 is the authority on this card's cost**, and it has now been
-read: it showed ~100% against a predicted 44.2%, which is what prompted
-the 32-bit rewrite of the filter bank in v1.23.0. The model still does not
-know what `__aeabi_lmul` costs in context; treat its number as a lower
-bound and read the jack.
+read. Before the v1.23.0 rewrite: ~100% against a predicted 44.2%. After:
+**60% typical, 70% peak.** The model still does not know what
+`__aeabi_lmul` costs in context, and it was out by more than a factor of
+two in the direction that matters; treat its number as a lower bound and
+read the jack.
 
 ## They are LIFT gestures (v1.6.0)
 
@@ -1143,11 +1171,12 @@ it are playable; volume behaves; the output is clean at the current gain.
 
 Genuinely open:
 
-- [ ] **Re-read CV Out 2 after the v1.23.0 32-bit rewrite.** The first
-      reading was ~5 V, essentially 100% of budget, against a predicted
-      44.2% - that is what prompted the rewrite. Removing 36
-      `__aeabi_lmul` calls per sample should move it a long way, but the
-      only figure worth quoting is the one on the jack.
+- [x] ~~Read CV Out 2.~~ **Done.** Before the 32-bit rewrite it read
+      ~5 V - the clamp, 100% of budget - against a predicted 44.2%.
+      After: **3.0 V typical, 3.5 V peak = 60% and 70%**, or 12.5 and
+      14.6 us against the 20.83 us deadline. About 6 us spare at the
+      worst. `budget_check.py`'s number remains a lower bound and should
+      be read as one.
 - [ ] Confirm the USB lockup is gone. It took sustained fader plus
       accelerometer traffic to provoke, so it needs deliberate
       reproduction rather than absence of reports. Three separate causes

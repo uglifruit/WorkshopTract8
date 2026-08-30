@@ -150,10 +150,20 @@ def main():
     print("  and check the address is in RAM (0x2000....), not flash")
     print("  (0x1000....).")
 
-    print("\n  If the measured figure on CV Out 2 comes back far above this,")
-    print("  the ranked list above is where to look - the filter bank is")
-    print("  the obvious target, and MulQ15-style 32-bit split multiplies")
-    print("  are the known fallback (see WorkshopSpectral's fft.h).")
+    print("\n  MEASURED ON HARDWARE, and this model was wrong.")
+    print()
+    print("    v1.22.x, int64 filter bank : predicted 44.2%, MEASURED ~100%")
+    print("    v1.23.0, int32 filter bank : MEASURED 60% typical, 70% peak")
+    print()
+    print("  The model does not know that (int64_t)a * b is a CALL to")
+    print("  __aeabi_lmul on an M0+ rather than an instruction, nor what")
+    print("  that costs in context. It was out by more than a factor of")
+    print("  two in the direction that matters.")
+    print()
+    print("  CV Out 2 carried this measurement and now carries the vowel")
+    print("  instead - the number stopped changing, and the jack was")
+    print("  worth more than the meter. To measure again, put the")
+    print("  timing back around the ISR body; see CLAUDE.md v1.23.0.")
 
     # This script cannot fail: it measures nothing. It exists to inform,
     # and to be replaced by a hardware reading.

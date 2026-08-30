@@ -3,7 +3,7 @@ Name: Voder
 Description: The 1939 Bell Labs Voder - a filter and formant based voice-synthesis machine, invented by Homer Dudley - played by hand from the panel or from a Music Thing 8mu over USB MIDI Host.
 Language: C++ (ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: "1.23.0"
+Version: "1.24.0"
 Status: Released
 License: MIT
 repository: https://github.com/uglifruit/WorkshopTract8
@@ -26,7 +26,7 @@ contact:
 
 uf2:
   - path: UF2/tract8.uf2
-    name: Voder 1.23.0
+    name: Voder 1.24.0
 
 tags:
   - synth
@@ -86,8 +86,9 @@ summary: |
   coefficients. The buzz is a polyBLEP-corrected sawtooth. Core 0 runs the
   48 kHz audio interrupt at 192 MHz; Core 1 owns the TinyUSB host stack and
   nothing else, and never parses inside a USB callback. All code is copied
-  to RAM to keep flash-cache jitter out of the audio path. CV Out 2 reports
-  the measured DSP load.
+  to RAM to keep flash-cache jitter out of the audio path. The whole engine
+  is 32-bit integer arithmetic - measured at 60% of the per-sample budget
+  on hardware, where the 64-bit version it replaced was at 100%.
 
 panel:
   inputs:
@@ -144,11 +145,13 @@ panel:
         Formant energy envelope, smoothed to roughly 5 ms - follows how much
         the filter bank is passing rather than the audio itself.
     - id: CVOut2
-      name: DSP Load
+      name: Vowel
       type: cv
       description: >
-        Measured microseconds per sample against the 20.83 us budget, 0-5 V
-        for 0-100%. A measurement, not an estimate.
+        The openness axis of the vowel cube as a control voltage, 0-5 V
+        from closed to open. In BABBLE and auto-chatter it wanders on its
+        own, so it is a modulation source musically related to what is
+        being heard rather than an unrelated LFO.
     - id: PulseOut1
       name: Voiced
       type: pulse

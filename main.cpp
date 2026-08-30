@@ -141,15 +141,6 @@ static constexpr int32_t kDefaultClickDecay = 2000;
 // a quarter of the ISR budget down to under one percent. See ReadPanel().
 static constexpr int32_t kMorphDiv = 384;
 
-// DSP load is averaged over this many samples before being written to
-// CV Out 2. 256 samples is 5.3 ms - fast enough to see a transient, slow
-// enough that the reading is stable to look at.
-static constexpr int32_t kLoadWindow = 256;
-
-// Per-sample budget at 48 kHz, microseconds, times 256 to keep the load
-// arithmetic in integers. 1e6/48000 = 20.833 us.
-static constexpr uint32_t kBudgetUs256 = 5333;  // 20.833 * 256
-
 static inline int32_t Clamp15(int32_t x) {
   if (x > 32767) return 32767;
   if (x < 0) return 0;
@@ -226,9 +217,7 @@ class VoderCard : public ComputerCard {
 
     last_plosive_ = 0;
     last_pulse1_ = false;
-    load_acc_ = 0;
-    load_count_ = 0;
-    load_out_ = 0;
+    vowel_cv_ = vowel_smooth_ = 0;
     led_phase_ = 0;
     energy_smooth_ = 0;
     formant_cv_ = 0;
@@ -409,8 +398,6 @@ class VoderCard : public ComputerCard {
   }
 
   virtual void __not_in_flash_func(ProcessSample)() override {
-    const uint32_t t_start = time_us_32();
-
     // --- boot mute --------------------------------------------------------
     if (boot_mute_ > 0) {
       boot_mute_--;
@@ -783,30 +770,39 @@ class VoderCard : public ComputerCard {
     if (cv1 > 2047) cv1 = 2047;
     CVOut1((int16_t)cv1);
 
-    // CV Out 2: measured DSP load. This is the authority on cost - not any
-    // figure derived on paper. Everything in tools/budget_check.py is a
-    // prediction until this pin is read on real hardware.
-    CVOut2((int16_t)load_out_);
+    // CV Out 2: VOWEL POSITION - the openness axis of the cube, 0 to 5 V.
+    //
+    // This was the DSP load meter, which did its job: it read ~100% of
+    // budget against a model predicting 44.2%, which is what found the
+    // int64 filter bank (see CLAUDE.md, v1.23.0). After the rewrite it
+    // read 60% typical and 70% peak, and a number that is not going to
+    // change again is not worth a jack on a card this short of outputs.
+    //
+    // The vowel is the useful thing to put here. In BABBLE and
+    // auto-chatter it wanders on its own, so this is a modulation source
+    // that is musically RELATED to what is being heard rather than an
+    // unrelated LFO - patch it at a filter and the patch moves with the
+    // voice. In the deliberate mode it simply follows the hand.
+    //
+    // Smoothed at the same ~5 ms as the energy out, so it reads as a
+    // control voltage rather than as stepped control-rate updates.
+    vowel_smooth_ += (vowel_cv_ - vowel_smooth_) >> 6;
+    int32_t cv2 = vowel_smooth_ >> 4;
+    if (cv2 > 2047) cv2 = 2047;
+    if (cv2 < 0) cv2 = 0;
+    CVOut2((int16_t)cv2);
 
     PulseOut1(voder_.Voiced());
     PulseOut2(g_state.freeze != 0);
 
     UpdateLeds();
 
-    // --- load measurement -------------------------------------------------
-    // Taken last so it covers essentially the whole ISR body. The timer
-    // read itself costs a few cycles and is inside the measurement, which
-    // is the conservative direction to err in.
-    load_acc_ += (time_us_32() - t_start);
-    if (++load_count_ >= kLoadWindow) {
-      // mean_us * 256 / budget_us_256 * 2047, rearranged to stay integral
-      // and avoid overflow: load_acc_ is at most 256 * ~21 = 5376.
-      int32_t load = (int32_t)((load_acc_ * 2047u) / kBudgetUs256);
-      if (load > 2047) load = 2047;
-      load_out_ = load;
-      load_acc_ = 0;
-      load_count_ = 0;
-    }
+    // The DSP load meter that used to live here is gone with CV Out 2.
+    // It did its job - it read ~100% of budget against a model predicting
+    // 44.2%, which is what found the int64 filter bank - and once the
+    // number stopped changing it was two time_us_32() reads and a divide
+    // per sample to compute something nothing looked at. The measurement
+    // is in CLAUDE.md; put it back if the ISR ever grows again.
   }
 
  private:
@@ -1089,6 +1085,12 @@ class VoderCard : public ComputerCard {
 
     // Three axes, eight corner vowels, trilinear between them. vowels.h.
     int32_t gains[kNumBands];
+    // Published for CV Out 2. This is the openness ACTUALLY being sounded -
+    // after the 8mu takeover, the formant CV and the babble animation - so
+    // the jack reports the vowel the card is making rather than where any
+    // one control happens to sit.
+    vowel_cv_ = openness;
+
     BlendVowel(openness, front, round_amt, gains);
 
     // Brightness tilts the result toward the high or low bands.
@@ -1261,8 +1263,7 @@ class VoderCard : public ComputerCard {
   int32_t panel_pitch_, panel_bright_, panel_round_;
   uint32_t last_plosive_;
   bool last_pulse1_;
-  uint32_t load_acc_;
-  int32_t load_count_, load_out_;
+  int32_t vowel_cv_, vowel_smooth_;
   int32_t led_phase_;
   int32_t energy_smooth_;
 };
