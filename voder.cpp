@@ -112,6 +112,8 @@ void Voder::Init(uint32_t seed) {
   phase_inc_ = 0;
   rng_ = seed ? seed : 0xDEADBEEFu;  // xorshift must never be zero
   plosive_ = 0;
+  plosive_hp1_ = 0;
+  plosive_hp2_ = 0;
   plosive_lp1_ = 0;
   plosive_lp2_ = 0;
   plosive_len_ = kPlosiveSamples;
@@ -334,32 +336,42 @@ int32_t __not_in_flash_func(Voder::Process)(const Params& p) {
     const int32_t env = plosive_hold_
                         ? 32767
                         : (plosive_ << 15) / plosive_len_;
-    // The burst is LOWPASSED, not raw noise.
+    // The burst is BANDPASSED, not raw noise and not merely lowpassed.
     //
-    // Raw white noise was reported as sounding like white noise rather
-    // than like a P or a B, which is exactly right: a bilabial release
-    // puts nearly all its energy below 1 kHz. Two one-pole sections give
-    // -12 dB/octave above about 700 Hz, which lands -14 dB at 1-4 kHz and
-    // -34 dB above 4 kHz relative to the low end. See kPlosiveLpQ15.
+    // Raw noise sounded like white noise. A plain lowpass fixed that and
+    // introduced the opposite fault - it kept everything below its corner,
+    // including the sub-100 Hz region, and the burst became a thump. A
+    // real bilabial release has little energy below 200 Hz, because the
+    // lips are closed and nothing radiates. See kPlosiveLoQ15.
+    //
+    // Two poles up, two poles down, by subtraction: the high pair is a
+    // lowpass that removes the hiss, and subtracting a slower tracking of
+    // its own output removes the thump. Four multiply-adds, no resonance,
+    // nothing to go unstable.
     //
     // The filter runs continuously rather than only during a burst, so it
     // is already settled when one starts - a filter starting from zero
     // state produces a click of its own at the very moment the burst is
     // meant to be shaping one.
     const int32_t raw = ((int32_t)(Random() >> 16)) - 32768;
-    plosive_lp1_ += (int32_t)(((int64_t)(raw - plosive_lp1_) *
-                               kPlosiveLpQ15) >> 15);
+    plosive_hp1_ += (int32_t)(((int64_t)(raw - plosive_hp1_) *
+                               kPlosiveHiQ15) >> 15);
+    plosive_hp2_ += (int32_t)(((int64_t)(plosive_hp1_ - plosive_hp2_) *
+                               kPlosiveHiQ15) >> 15);
+    plosive_lp1_ += (int32_t)(((int64_t)(plosive_hp2_ - plosive_lp1_) *
+                               kPlosiveLoQ15) >> 15);
     plosive_lp2_ += (int32_t)(((int64_t)(plosive_lp1_ - plosive_lp2_) *
-                               kPlosiveLpQ15) >> 15);
-    const int32_t burst = plosive_lp2_;
+                               kPlosiveLoQ15) >> 15);
+    const int32_t burst = plosive_hp2_ - plosive_lp2_;
 
     // Scaled by the click level so the burst can be balanced against the
     // voice.
     const int32_t lvl = (int32_t)(((int64_t)env * p.click_level) >> 15);
 
-    // >>16 here rather than the >>19 the unfiltered burst needed: the
-    // two-pole lowpass throws away about 16 dB of level on its own, so
-    // keeping the old shift would have made the click inaudible.
+    // >>17 here. The bandpass costs about 9 dB of level where the earlier
+    // lowpass cost 16, so the shift moves with it - the two numbers are
+    // the same decision expressed in two places, and changing the filter
+    // without changing the shift silently changes the balance.
     //
     // The shift sets the fader's RANGE and kDefaultClickLevel sets where
     // it sits without an 8mu. Those are separate decisions and were
@@ -368,7 +380,7 @@ int32_t __not_in_flash_func(Voder::Process)(const Params& p) {
     // the range here and lowering the default instead gives both - a
     // default 18 dB under the voice, and a fader that still reaches
     // slightly above it for a deliberate hit.
-    sum += (int32_t)(((int64_t)burst * lvl) >> 16);
+    sum += (int32_t)(((int64_t)burst * lvl) >> 17);
 
     if (!plosive_hold_) plosive_--;
   }

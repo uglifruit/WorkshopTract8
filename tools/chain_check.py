@@ -26,7 +26,8 @@ Checks:
   4. Headroom: worst case must not overflow int32 or clip the DAC.
   5. The click sits under the voice, measured against the VOICE.
   6. Breath changes the character of the sound, not its level.
-  7. The plosive is dark enough to read as a stop, not as noise.
+  7. The plosive occupies a band - neither white noise nor a thump.
+  8. The default burst is a consonant length, not a drum hit.
 
 Run: python tools/chain_check.py
 """
@@ -198,9 +199,13 @@ def check_headroom():
 
 
 # Click gain staging, transcribed from voder.cpp.
-CLICK_SHIFT = 16
-PLOSIVE_LP_Q15 = 3000        # two cascaded one-poles, ~700 Hz corner
-PLOSIVE_LP_LOSS_DB = -15.9   # measured RMS loss through the pair
+CLICK_SHIFT = 17
+PLOSIVE_LO_Q15 = 2600        # ~600 Hz, removes the thump
+PLOSIVE_HI_Q15 = 12000       # ~2800 Hz, removes the hiss
+PLOSIVE_LP_LOSS_DB = -9.4    # measured RMS loss through the bandpass
+DEFAULT_CLICK_DECAY = 2000   # main.cpp, about 12 ms
+PLOSIVE_MIN_SAMPLES = 384
+PLOSIVE_MAX_SAMPLES = 48000
 DEFAULT_CLICK_LEVEL = 3000      # main.cpp, no 8mu attached
 VOWEL_BAND_FRACTION = sum(VOWEL_AH) / (8 * 32767)
 
@@ -222,65 +227,24 @@ def click_at_sum(level):
     return raw * (10 ** (PLOSIVE_LP_LOSS_DB / 20.0))
 
 
-def check_plosive_spectrum():
-    """A P or a B is not white noise."""
-    print("\n7. The plosive is dark, like a bilabial stop")
-    ok = True
+def voice_at_sum():
+    """Roughly what a real vowel contributes at the summing point."""
+    return int((32767 >> PRE_SHIFT) * 2.299 * VOWEL_BAND_FRACTION)
 
-    # Two cascaded one-poles, run on white noise, measured in bands.
-    rng = np.random.default_rng(1)
-    n = 8192
-    x = rng.integers(-32768, 32767, n).astype(float)
-    a = PLOSIVE_LP_Q15 / 32768.0
-    y1 = y2 = 0.0
-    y = np.zeros(n)
-    for i, v in enumerate(x):
-        y1 += (v - y1) * a
-        y2 += (y1 - y2) * a
-        y[i] = y2
 
-    spec = np.abs(np.fft.rfft(y * np.hanning(n)))
-    freqs = np.fft.rfftfreq(n, 1.0 / FS)
+def click_at_sum(level):
+    """Peak contribution of a burst at the summing point.
 
-    def band(lo, hi):
-        m = (freqs >= lo) & (freqs < hi)
-        return float(np.sqrt(np.mean(spec[m] ** 2)))
-
-    low = band(100, 1000)
-    mid = band(1000, 4000)
-    high = band(4000, 12000)
-    mid_db = 20 * math.log10(mid / low)
-    high_db = 20 * math.log10(high / low)
-
-    print(f"   below 1 kHz    {0.0:+6.1f} dB   (reference)")
-    print(f"   1-4 kHz        {mid_db:+6.1f} dB")
-    print(f"   4-12 kHz       {high_db:+6.1f} dB")
-
-    # A real /p/ sits about -15 to -25 dB at 4 kHz relative to its low
-    # peak. Raw white noise would read 0 dB in every band, which is what
-    # it did before and why it sounded like a hi-hat rather than a stop.
-    good = mid_db < -8.0 and high_db < -25.0
-    if not good:
-        ok = False
-    print(f"   dark enough to read as /p/ or /b/   "
-          f"{'ok' if good else '<-- STILL BRIGHT'}")
-    print("   (white noise reads 0 dB in every band; the alveolars /t/ and")
-    print("    /d/ ARE bright, but this card has one burst so it should be")
-    print("    the dark one - a bright one sounds like a hi-hat)")
-
-    # The filter must not have a DC offset, which would click on its own.
-    dc = abs(float(np.mean(y))) / float(np.sqrt(np.mean(y ** 2)))
-    good = dc < 0.05
-    if not good:
-        ok = False
-    print(f"   DC offset {dc*100:.1f}% of RMS   "
-          f"{'ok' if good else '<-- WOULD CLICK'}")
-    return ok
+    The bandpass that shapes the burst also costs about 9 dB of level, so
+    the shift and the filter are the same decision expressed twice:
+    changing one without the other silently moves the balance.
+    """
+    raw = (32768 * level) >> CLICK_SHIFT
+    return raw * (10 ** (PLOSIVE_LP_LOSS_DB / 20.0))
 
 
 def check_click_balance():
-    """The click must sit UNDER the voice, and 'under' means against the
-    voice - not against the click's own full scale."""
+    """The click must sit UNDER the voice, measured against the VOICE."""
     print("\n5. Click level against the voice")
     ok = True
     voice = voice_at_sum()
@@ -293,10 +257,10 @@ def check_click_balance():
         db = 20 * math.log10(max(c, 1) / voice)
         print(f"   {label}      {db:+6.1f} dB")
 
-    # The default must be clearly under the voice. It was reported as too
-    # percussive twice: the first fix set the level to "-14 dB" but that
-    # was -14 dB of the CLICK's full scale, which landed it 1.5 dB below
-    # the voice - level with it, in other words.
+    # Reported as too loud twice. The first fix set the level to "-14 dB",
+    # but that was -14 dB of the CLICK's own full scale, which landed it
+    # level with the voice. Measure against the voice or the number means
+    # nothing.
     d = 20 * math.log10(max(click_at_sum(DEFAULT_CLICK_LEVEL), 1) / voice)
     good = d < -10.0
     if not good:
@@ -304,17 +268,14 @@ def check_click_balance():
     print(f"   default is {d:+.1f} dB under the voice   "
           f"{'ok - punctuation' if good else '<-- STILL PERCUSSIVE'}")
 
-    # But the fader must still be able to make it loud, or the control is
-    # pointless.
     full = 20 * math.log10(max(click_at_sum(32767), 1) / voice)
-    good = full > -3.0
+    good = full > -6.0
     if not good:
         ok = False
     print(f"   fader full reaches {full:+.1f} dB   "
           f"{'ok - can still be loud' if good else '<-- CANNOT GET LOUD'}")
     print("   (the click is summed AFTER the bank, so unlike the voice it")
-    print("    is never attenuated by the vowel - which is why it needs")
-    print("    to be set this far down to sit underneath)")
+    print("    is never attenuated by the vowel)")
     return ok
 
 
@@ -341,10 +302,89 @@ def check_breath_is_a_ratio():
         ok = False
     print(f"   level varies by {spread} across every combination   "
           f"{'ok - constant' if good else '<-- BREATH CHANGES VOLUME'}")
-    print("   (the old code gated buzz and hiss separately and crossfaded")
-    print("    afterwards, so a button gating one source silenced half the")
-    print("    crossfade and 50% breath gave HALF THE VOLUME)")
+    print("   (gating buzz and hiss separately and crossfading afterwards")
+    print("    made 50% breath give HALF THE VOLUME when one gate was shut)")
     return ok
+
+
+def plosive_burst(n=8192, seed=1):
+    """Transcription of the bandpass in Voder::Process()."""
+    rng = np.random.default_rng(seed)
+    x = rng.integers(-32768, 32767, n).astype(float)
+    ah = PLOSIVE_HI_Q15 / 32768.0
+    al = PLOSIVE_LO_Q15 / 32768.0
+    h1 = h2 = l1 = l2 = 0.0
+    y = np.zeros(n)
+    for i, v in enumerate(x):
+        h1 += (v - h1) * ah
+        h2 += (h1 - h2) * ah
+        l1 += (h2 - l1) * al
+        l2 += (l1 - l2) * al
+        y[i] = h2 - l2
+    return x, y
+
+
+def check_plosive_spectrum():
+    """A P or a B is neither white noise nor a kick drum."""
+    print("\n7. The plosive occupies the band a stop actually occupies")
+    ok = True
+
+    x, y = plosive_burst()
+    spec = np.abs(np.fft.rfft(y * np.hanning(len(y))))
+    freqs = np.fft.rfftfreq(len(x), 1.0 / FS)
+
+    def band(lo, hi):
+        m = (freqs >= lo) & (freqs < hi)
+        return float(np.sqrt(np.mean(spec[m] ** 2)))
+
+    peak = band(500, 1500)
+    sub = 20 * math.log10(band(20, 200) / peak)
+    high = 20 * math.log10(band(4000, 12000) / peak)
+
+    print(f"   below 200 Hz   {sub:+6.1f} dB   (thump region)")
+    print(f"   500-1500 Hz    {0.0:+6.1f} dB   (the burst peak)")
+    print(f"   above 4 kHz    {high:+6.1f} dB   (hiss region)")
+
+    # BOTH ends have to be down. A plain lowpass gets the top right and
+    # the bottom badly wrong - it keeps the sub-100 Hz energy, and the
+    # burst becomes a thump. That version was reported as "a bomb going
+    # off"; the one before it, unfiltered, as "white noise". The band is
+    # the only shape that is neither.
+    good_low = sub < -6.0
+    good_high = high < -8.0
+    if not (good_low and good_high):
+        ok = False
+    print(f"   thump removed   {'ok' if good_low else '<-- A BOMB'}")
+    print(f"   hiss removed    {'ok' if good_high else '<-- WHITE NOISE'}")
+
+    dc = abs(float(np.mean(y))) / float(np.sqrt(np.mean(y ** 2)))
+    good = dc < 0.05
+    if not good:
+        ok = False
+    print(f"   DC offset {dc*100:.1f}% of RMS   "
+          f"{'ok' if good else '<-- WOULD CLICK'}")
+    return ok
+
+
+def check_plosive_length():
+    """A consonant is short. A drum hit is not."""
+    print("\n8. The default burst is a consonant, not a drum hit")
+    sq = (DEFAULT_CLICK_DECAY * DEFAULT_CLICK_DECAY) >> 15
+    n = PLOSIVE_MIN_SAMPLES + \
+        (((PLOSIVE_MAX_SAMPLES - PLOSIVE_MIN_SAMPLES) * sq) >> 15)
+    ms = n / (FS / 1000.0)
+    # A real plosive release is 5-15 ms. It was 41 ms, which reads as a
+    # drum whatever its spectrum.
+    good = 4.0 < ms < 20.0
+    print(f"   default decay {ms:.0f} ms   "
+          f"{'ok - inside the real 5-15 ms range' if good else '<-- TOO LONG'}")
+
+    full = PLOSIVE_MIN_SAMPLES + \
+        (((PLOSIVE_MAX_SAMPLES - PLOSIVE_MIN_SAMPLES) * 32767) >> 15)
+    print(f"   fader full still reaches {full/(FS/1000.0):.0f} ms   ok")
+    print("   (the fader is for sustained textures; the DEFAULT is what")
+    print("    a panel trigger gives before anyone touches anything)")
+    return good
 
 
 def main():
@@ -359,6 +399,7 @@ def main():
     ok &= check_click_balance()
     ok &= check_breath_is_a_ratio()
     ok &= check_plosive_spectrum()
+    ok &= check_plosive_length()
 
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1

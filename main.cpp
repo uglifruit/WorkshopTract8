@@ -122,9 +122,14 @@ static constexpr int32_t kPlosiveChance = 70;         // ~27%
 // full for when a loud one is wanted.
 static constexpr int32_t kDefaultClickLevel = 3000;
 
-// Default click decay with no 8mu attached, Q15. Short - a consonant, not
-// a wash. Maps to roughly 30 ms through the squared curve in voder.cpp.
-static constexpr int32_t kDefaultClickDecay = 6000;
+// Default click decay with no 8mu attached, Q15. Maps to about 12 ms
+// through the squared curve in voder.cpp.
+//
+// It was 6000, which is 41 ms - long enough to read as a drum hit rather
+// than a consonant, and part of why the burst was reported as a bomb. A
+// real plosive release is 5 to 15 ms. The fader still reaches a full
+// second at the top for sustained textures.
+static constexpr int32_t kDefaultClickDecay = 2000;
 
 // Vowel morph recompute interval, samples. 384 samples is 125 Hz - far
 // faster than a hand can turn a knob, and it takes the morph from roughly

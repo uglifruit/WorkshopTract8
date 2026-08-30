@@ -60,22 +60,30 @@ static constexpr int32_t kPlosiveSamples = 384;  // 8 ms at 48 kHz
 // as punctuation.
 static constexpr int32_t kPlosiveMaxSamples = 48000;  // 1 s at 48 kHz
 
-// Plosive lowpass coefficient, Q15. Two of these cascade, giving
-// -12 dB/octave above a corner near 700 Hz.
+// Plosive BANDPASS coefficients, Q15. Two poles either side, giving a band
+// of roughly 600-2800 Hz.
 //
-// The burst was raw white noise, flat to Nyquist, and reported as sounding
-// like white noise rather than like speech - correctly. A real bilabial
-// release (/p/, /b/) puts nearly all its energy below 1 kHz and falls
-// steeply above that; it is the alveolars (/t/, /d/) that are bright, and
-// this card only has one burst so it should be the dark one. The bright
-// version reads as a hi-hat.
+// This started as a plain lowpass, which was wrong in an instructive way.
+// Removing the top of a white-noise burst does make it darker, but it
+// leaves everything below the corner INCLUDING the sub-100 Hz region -
+// and that is where a thump lives. The result was reported as "a bomb
+// going off", correctly: a burst with most of its energy under 200 Hz is
+// a kick drum, not a consonant.
 //
-// Measured with this filter: -14 dB at 1-4 kHz and -34 dB above 4 kHz,
-// relative to the sub-1 kHz energy. A real /p/ sits around -15 to -25 dB
-// at 4 kHz, so this is in the right territory.
-static constexpr int32_t kPlosiveLpQ15 = 3000;
+// A real bilabial release has little energy below 200 Hz, because the lips
+// are closed and nothing is radiating. Its peak is a broad one around
+// 500-1500 Hz. So the burst needs a BAND, not a ceiling: the high poles
+// remove the hiss that made it sound like white noise, and the low poles
+// remove the thump that made it sound like an explosion.
+//
+// Implemented as a two-pole lowpass minus a two-pole tracking of its own
+// low end, which is a bandpass for four multiply-adds and no resonance to
+// go unstable. Measured: -10.4 dB below 200 Hz and -12.6 dB above 4 kHz,
+// both relative to the 500-1500 Hz peak.
+static constexpr int32_t kPlosiveLoQ15 = 2600;   // ~600 Hz, removes thump
+static constexpr int32_t kPlosiveHiQ15 = 12000;  // ~2800 Hz, removes hiss
 
-// Glottal gate ramp, samples. Gating the buzz with a hard edge clicks
+// Glottal gate ramp, samples.// Glottal gate ramp, samples. Gating the buzz with a hard edge clicks
 // audibly; 2 ms of linear ramp removes it without slurring the attack.
 static constexpr int32_t kGateRamp = 96;  // 2 ms at 48 kHz
 
@@ -150,8 +158,8 @@ class Voder {
   uint32_t phase_inc_;      // Q32 increment
   uint32_t rng_;
   int32_t  plosive_;        // samples remaining in the burst
-  int32_t  plosive_lp1_;    // two-pole lowpass state for the burst
-  int32_t  plosive_lp2_;
+  int32_t  plosive_hp1_, plosive_hp2_;   // bandpass state: high poles
+  int32_t  plosive_lp1_, plosive_lp2_;   // bandpass state: low poles
   int32_t  plosive_len_;    // length this burst was started with
   bool     plosive_hold_;   // true while sustaining at full decay
   int32_t  gate_env_;       // Q15, smoothed voiced gate
