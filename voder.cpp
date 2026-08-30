@@ -305,7 +305,24 @@ int32_t __not_in_flash_func(Voder::Process)(const Params& p) {
     const int64_t acc = (int64_t)f.b0 * (excite - f.x2)
                       - (int64_t)f.a1 * f.y1
                       - (int64_t)f.a2 * f.y2;
-    const int32_t y = (int32_t)(acc >> 15);
+
+    // TRUNCATE TOWARD ZERO, not toward negative infinity.
+    //
+    // An arithmetic >> rounds DOWN, so every sample loses up to one count
+    // in the SAME direction. In a feedback path that bias recirculates:
+    // fed pure silence with any non-zero state, the 700 Hz band settles at
+    // -118 counts and stays there forever rather than decaying to zero.
+    // Summed across the bank that is a permanent negative DC offset which
+    // moves with the band gains - measured on the bench as a waveform
+    // sitting well below centre, with the offset tracking the faders.
+    //
+    // Rounding by adding half before the shift is WORSE (+586 across the
+    // bank), because it biases positive instead. The fix is symmetry: with
+    // truncation toward zero the error has no preferred direction, every
+    // band settles at exactly 0, and the residual DC in a real vowel drops
+    // about fivefold and stops tracking brightness.
+    const int64_t shifted = acc < 0 ? -((-acc) >> 15) : (acc >> 15);
+    const int32_t y = (int32_t)shifted;
 
     f.x2 = f.x1; f.x1 = excite;
     f.y2 = f.y1; f.y1 = y;
