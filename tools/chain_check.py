@@ -649,6 +649,72 @@ def check_output_headroom():
     return ok
 
 
+# ComputerCard drives an external 4-way mux, advancing one state per audio
+# interrupt, and updates knobs[mux_state] from the shared ADC channel. The
+# CV inputs share a channel two ways. Transcribed from ComputerCard.h.
+KNOB_MUX_STATES = 4
+CV_MUX_STATES = 2
+
+PANEL_DIV = 4     # main.cpp kPanelDiv
+MORPH_DIV = 384   # main.cpp kMorphDiv
+
+
+def check_mux_lock():
+    """Control reads must not beat against ComputerCard's input mux."""
+    print()
+    print("12. Panel reads are locked to the input mux")
+    ok = True
+
+    # THE BUG THIS GUARDS. kPanelDiv was 3: one knob per sample, round
+    # robin. But a knob only receives a NEW value every 4 samples, because
+    # the mux has 4 states and advances once per interrupt. A 3-phase read
+    # against a 4-state mux means the AGE of the value being read walks
+    # 0,1,2,0,1,2 with a period of lcm(3,4) = 12 samples.
+    #
+    # 48000/12 is 4 kHz. That is an audible whine, measured on the bench at
+    # roughly 280 us per cycle, and INDEPENDENT of anything patched in
+    # because the sampling pattern generates it on its own. It is
+    # intermittent because the knob's own ~60 Hz filter has to have some
+    # ripple left for the beat to turn into a tone.
+    #
+    # No amount of smoothing downstream fixes this: the tone is created at
+    # the point of sampling, so it arrives already inside the signal.
+    import math
+
+    def beat_period(read_div, mux_states):
+        """Samples before the read lands at the same mux phase again."""
+        return read_div * mux_states // math.gcd(read_div, mux_states)
+
+    for name, div, states in (
+        ("panel read vs knob mux", PANEL_DIV, KNOB_MUX_STATES),
+        ("panel read vs CV mux", PANEL_DIV, CV_MUX_STATES),
+        ("morph vs knob mux", MORPH_DIV, KNOB_MUX_STATES),
+        ("morph vs CV mux", MORPH_DIV, CV_MUX_STATES),
+    ):
+        period = beat_period(div, states)
+        # Locked means the read period is already a whole number of mux
+        # cycles, so the beat period is just the read period itself.
+        locked = (div % states == 0)
+        freq = FS / period
+        audible = 20.0 < freq < 20000.0
+        good = locked or not audible
+        if not good:
+            ok = False
+        note = "locked" if locked else f"BEATS at {freq:.0f} Hz"
+        print(f"   {name:26s} every {div:3d} vs {states} states -> "
+              f"{note}   {'ok' if good else '<-- AUDIBLE WHINE'}")
+
+    # The specific regression: 3 against 4 must be recognised as bad, or
+    # this test proves nothing.
+    bad = beat_period(3, KNOB_MUX_STATES)
+    bad_f = FS / bad
+    print(f"   (the old kPanelDiv=3 beat every {bad} samples = "
+          f"{bad_f:.0f} Hz, {1e6 / bad_f:.0f} us - the reported whine)")
+    if not (20.0 < bad_f < 20000.0):
+        ok = False
+    return ok
+
+
 def main():
     print("Voder end-to-end chain check - absolute levels in DAC counts")
     print(f"  pre-bank >>{PRE_SHIFT}, post-bank >>{POST_SHIFT}, "
@@ -665,6 +731,7 @@ def main():
     ok &= check_gain_smoothing()
     ok &= check_knob_jitter()
     ok &= check_output_headroom()
+    ok &= check_mux_lock()
 
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1
