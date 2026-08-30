@@ -11,6 +11,66 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
+## The whine was MY soft clipper, and a cubic has no linear region (v1.22.0)
+
+The v1.20.0 fix for the card being too quiet introduced the whine that
+four subsequent versions then hunted. Worth stating plainly: this was a
+regression I added, and I spent three rounds blaming the hardware for it.
+
+**A cubic soft clipper bends from the very first sample.** There is no
+linear region at all - `y = x - x^3/3` is curving at x = 1. So every vowel
+was distorted all the time, not merely the peaks: 28 dB of THD at ordinary
+playing level.
+
+That is exactly the reported reproduction:
+
+- **Fader 7 (volume) full** drives the level furthest into the curve.
+- **Fader 5 (brightness) at SOME heights** decides WHICH band is loudest,
+  and therefore where that band's harmonics land. A 700 Hz formant puts
+  its 3rd at 2100 Hz and its 5th at 3500 Hz - right at the ~3750 Hz
+  reported.
+- **Static, not moving** - because harmonic distortion is a property of
+  the transfer curve, not of anything changing.
+
+### What identified it
+
+A bisection build with the output stage bypassed - engine intact, volume
+multiply and clipper removed - **had no whine**. One flash, and the search
+collapsed from the whole card to eight lines.
+
+The complementary build (pure tone, engine bypassed) confirmed it from the
+other side: the tester noticed that fader 5 still changed the sound *of a
+tone the engine was not generating*, which is only possible if something
+downstream of both is coupling them. That was the output stage.
+
+**Three earlier candidates were eliminated the same way and should have
+been eliminated sooner:** LED PWM frequency, LED duty, and the knob
+sampling beat all survived their own test builds. Each of those was a real
+finding, and none was this.
+
+### The fix
+
+A **hard-knee limiter**. Below 1500 counts it is the identity - not
+approximately linear, exactly linear, so ordinary playing is bit-for-bit
+undistorted. Only genuine peaks bend, with a quadratic landing onto the
+rail.
+
+| | vowel at 528 | THD |
+|---|---|---|
+| original `>>2` | 528 | none |
+| v1.20.0 cubic | 1705 | **-28 dB** |
+| v1.22.0 limiter | 1320 | **-92 dB** |
+
+The gain stays at x2.5 deliberately. x3.5 would recover the last 2.2 dB
+and put a vowel back *above* the knee, which is precisely where the
+distortion was. +8 dB of the original headroom win survives, and that was
+the point of v1.20.0.
+
+**The rule: a saturating curve must have a linear region big enough for
+the signal that normally passes through it.** "Soft" is not automatically
+gentler - a soft knee that starts at zero distorts everything, where a
+hard knee placed above the music distorts nothing.
+
 ## The whine was our sampling BEATING against the input mux (v1.21.0)
 
 Reported as *"one cycle every ~280 us (approx), independent of LFO speed

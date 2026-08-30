@@ -156,31 +156,47 @@ static inline int32_t Clamp15(int32_t x) {
   return x;
 }
 
-// Soft saturation into the 12-bit DAC range.
+// Limiter into the 12-bit DAC range: exactly linear below the knee.
 //
 // The gain staging left 11.8 dB of headroom unused, because the shift had
 // to be sized for the WORST case - all eight bands wide open with a
 // coherent input - rather than for the vowels anyone actually plays. A
 // real vowel uses about three bands, so the card ran ~10 dB quieter than
-// it needed to and the noise floor sat correspondingly closer to the
-// signal. Measured on the bench at roughly +0.5 V to -1.5 V, where the
-// outputs can reach +/-6 V.
+// it needed to and the noise floor sat correspondingly closer to it.
 //
-// A cubic soft-knee takes that headroom back without the hard clip the
-// old shift was avoiding: linear below two thirds of full scale, rounding
-// over above it, flat at the rail. The rare coherent peak saturates
-// gracefully instead of squaring off, and everything below it - which is
-// all ordinary playing - is simply louder.
+// v1.20.0 took that headroom back with a cubic soft clipper and THAT WAS
+// A MISTAKE. A cubic bends from the very first sample - there is no
+// linear region at all - so every vowel was distorted all the time: 28 dB
+// of THD at ordinary playing level, with the third harmonic of a 700 Hz
+// formant landing near 2 kHz and the fifth near 3.5 kHz. On the bench
+// that was heard as a whine at roughly 3750 Hz, loudest with the volume
+// fader full (which drives the level into the curve) and varying with the
+// brightness fader (which decides WHICH band is loudest, and so where its
+// harmonics land). A test build with this stage bypassed had no whine.
+//
+// This is a hard-knee limiter instead. Below kKnee it is the identity -
+// not approximately linear, EXACTLY linear, so ordinary playing is
+// bit-for-bit undistorted. Only genuine peaks above the knee bend, with a
+// quadratic landing onto the rail. A vowel at the shipped gain measures
+// -92 dB THD where the cubic measured -28 dB.
 static inline int32_t SoftClip(int32_t x) {
   constexpr int32_t kLim = 2047;
-  if (x > -kLim && x < kLim) {
-    // y = (x - x^3/3) * 3/2, in Q15 against the limit.
-    const int32_t a = (int32_t)(((int64_t)x << 15) / kLim);
-    const int32_t a3 = (int32_t)(((int64_t)a * a >> 15) * a >> 15);
-    const int32_t y = a - a3 / 3;
-    return (int32_t)((((int64_t)y * kLim) >> 15) * 3 / 2);
+  constexpr int32_t kKnee = 1500;
+  constexpr int32_t kSpan = kLim - kKnee;
+
+  const int32_t mag = x < 0 ? -x : x;
+  if (mag <= kKnee) return x;  // the common case, untouched
+
+  const int32_t over = mag - kKnee;
+  int32_t y;
+  if (over >= 2 * kSpan) {
+    y = kLim;
+  } else {
+    // Quadratic landing: slope 1 at the knee, 0 at the rail.
+    y = kKnee + over - (over * over) / (4 * kSpan);
+    if (y > kLim) y = kLim;
   }
-  return x >= 0 ? kLim : -kLim;
+  return x < 0 ? -y : y;
 }
 
 class VoderCard : public ComputerCard {
@@ -736,10 +752,14 @@ class VoderCard : public ComputerCard {
     diag_use_ext_ = (p.ext_input != 0);
     diag_gated_ = (p.voiced_level == 0 && p.noise_level == 0);
 
-    // Level, then soft saturation. See SoftClip above: the old staging was
-    // sized for a worst case that ordinary playing never reaches, which
-    // cost about 10 dB on every vowel and pushed the signal down toward
-    // the noise floor rather than the noise floor down away from it.
+    // Level, then limiting. See SoftClip above.
+    //
+    // x2.5 puts a vowel at about 1320 counts - below the 1500 knee, so it
+    // passes through EXACTLY linear, and +8 dB on the original >>2
+    // staging. The v1.20.0 build used the same multiply into a cubic and
+    // measured 28 dB of THD at this level; the same vowel now measures
+    // -92 dB. Raising this to x3.5 would recover the last 2.2 dB and put
+    // the vowel back above the knee, which is where the distortion was.
     out = (out * 5) >> 1;
     out = SoftClip(out);
 

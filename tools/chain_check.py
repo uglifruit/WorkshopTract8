@@ -559,12 +559,19 @@ def _cdiv(a, b):
 def soft_clip(x):
     """Exact integer model of SoftClip() in main.cpp."""
     lim = 2047
-    if -lim < x < lim:
-        a = _cdiv(x << 15, lim)
-        a3 = ((a * a) >> 15) * a >> 15
-        y = a - _cdiv(a3, 3)
-        return _cdiv(((y * lim) >> 15) * 3, 2)
-    return lim if x >= 0 else -lim
+    knee = 1500
+    span = lim - knee
+    mag = -x if x < 0 else x
+    if mag <= knee:
+        return x
+    over = mag - knee
+    if over >= 2 * span:
+        y = lim
+    else:
+        y = knee + over - (over * over) // (4 * span)
+        if y > lim:
+            y = lim
+    return -y if x < 0 else y
 
 
 def check_output_headroom():
@@ -628,24 +635,31 @@ def check_output_headroom():
     print(f"   never leaves +/-2047            "
           f"{'ok' if inrange else '<-- OUT OF RANGE'}")
 
-    # Small signals must stay linear, or quiet playing gets distorted.
+    # Below the knee the stage must be EXACTLY linear - not approximately.
     #
-    # Measured against the curve's OWN small-signal slope, not against the
-    # raw multiply. The cubic's gain at the origin is 3/2 of the nominal
-    # because the *3/2 is what puts unity at the knee, so the effective
-    # gain here is about 3.7x rather than 2.5x. Comparing to (x * 5 >> 1)
-    # measures that intended slope as if it were distortion.
-    slope = staged(400) / 400.0
-    err = max(abs(staged(x) - round(x * slope)) for x in range(-200, 201))
-    frac = err / (200 * slope)
-    good = frac <= 0.10
+    # This is the whole point of the change. v1.20.0 used a cubic, which
+    # bends from the very first sample: there is no linear region at all,
+    # so every vowel was distorted all the time. 28 dB of THD at ordinary
+    # playing level, heard on the bench as a whine that tracked the volume
+    # and brightness faders - volume because it drives the level into the
+    # curve, brightness because it decides which band is loudest and so
+    # where that band's harmonics land. A build with this stage bypassed
+    # had no whine at all, which is what identified it.
+    bad = [x for x in range(-1500, 1501) if soft_clip(x) != x]
+    good = not bad
     if not good:
         ok = False
-    print(f"   small-signal error at +/-200     {err:4d} counts "
-          f"({frac * 100:.1f}%)   "
-          f"{'ok - linear where it matters' if good else '<-- DISTORTS'}")
-    print(f"   effective small-signal gain      {slope:.2f}x "
-          f"({20 * math.log10(slope):+.1f} dB)")
+    print(f"   exactly linear below the knee    "
+          f"{'ok - no distortion in normal play' if good else '<-- BENDS'}")
+
+    # And a real vowel must sit below the knee at the shipped gain, or the
+    # linear region is not where the music is.
+    vowel_staged = (528 * 5) >> 1
+    good = vowel_staged <= 1500
+    if not good:
+        ok = False
+    print(f"   a vowel lands at {vowel_staged:5d} vs knee 1500   "
+          f"{'ok - inside the linear region' if good else '<-- ABOVE THE KNEE'}")
     return ok
 
 
@@ -709,7 +723,9 @@ def check_mux_lock():
     bad = beat_period(3, KNOB_MUX_STATES)
     bad_f = FS / bad
     print(f"   (the old kPanelDiv=3 beat every {bad} samples = "
-          f"{bad_f:.0f} Hz, {1e6 / bad_f:.0f} us - the reported whine)")
+          f"{bad_f:.0f} Hz, {1e6 / bad_f:.0f} us - a real bug, "
+          f"but NOT the whine)")
+    print("    the whine was the output stage - see check 11)")
     if not (20.0 < bad_f < 20000.0):
         ok = False
     return ok
