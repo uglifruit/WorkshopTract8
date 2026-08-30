@@ -11,6 +11,63 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
+## The card was ~10 dB too quiet, and the CV was half-wave rectified (v1.20.0)
+
+Bench readings with a scope, which settled two things no simulation had
+even been asked about:
+
+> *"a bipolar sine LFO is a -ve voltage - basically half-wave rectified.
+> The vowel position FADER 1 and FADER 8 is also adjusting DC offset.
+> Maximum I can achieve is a waveform spanning +0.5 to -1.5 V, so very
+> quiet."*
+
+### The rectification: Clamp15 floors at 0
+
+`Clamp15()` clamps to **0..32767**, and the formant CV was applied through
+it:
+
+```cpp
+openness = Clamp15(openness + formant_cv_);
+front    = Clamp15(front    - formant_cv_);
+```
+
+At mid-travel that is symmetric and fine, which is why it was never
+noticed. But faders 1 and 8 set where the axes sit, and with a fader low
+the negative half of a bipolar LFO is swallowed whole: the vowel stops
+moving for half the cycle and the output jumps between "vowel present" and
+"vowel pinned". On a scope that is a half-wave rectified waveform whose
+offset moves with fader position - which is precisely what was reported,
+including the detail that faders 1 and 8 moved the offset.
+
+The CV is now **scaled into the headroom the faders leave**, so a full
+swing always sweeps a full vowel range wherever the faders sit. The fader
+chooses the centre; the CV keeps its whole travel around it.
+
+### The quietness: staging sized for a case nobody plays
+
+`return sum >> 2` was sized for the worst case - eight bands wide open with
+a coherent input, 1568 counts - while a real vowel uses about three bands
+and peaked at 528 of a possible 2047. That is **11.8 dB left on the table**,
+and it is half of why the card was called noisy: the noise was not loud,
+the voice was quiet, so the floor sat proportionally close to it.
+
+Raising the shift alone clips the coherent case flat, which is why the old
+comment forbade it. A cubic **soft knee** takes the headroom back instead:
+linear through everything ordinary, rounding over on the rare peak that
+would have clipped anyway, flat at the rail. A vowel goes 528 -> 1705
+counts, **+10.2 dB**, and the worst case lands at 2047 exactly rather than
+3920.
+
+Note the effective small-signal gain is ~3.7x, not the nominal 2.5x: the
+cubic's slope at the origin is 3/2 of nominal because the `*3/2` is what
+puts unity at the knee. `chain_check.py` check 11 measures linearity
+against that slope - comparing against the raw multiply reads the intended
+gain as if it were distortion, which is a mistake I made writing the test.
+
+**The lesson: headroom reserved for an unreachable worst case is not
+safety, it is lost signal.** A soft limiter converts that reservation back
+into level, and only the peaks that were going to clip anyway pay for it.
+
 ## The noise was a CONTROL CV read at AUDIO rate (v1.19.0)
 
 The one that was actually reported, found after four fixes that were each

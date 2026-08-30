@@ -551,6 +551,104 @@ def check_knob_jitter():
     return ok
 
 
+def _cdiv(a, b):
+    q = abs(a) // abs(b)
+    return q if (a < 0) == (b < 0) else -q
+
+
+def soft_clip(x):
+    """Exact integer model of SoftClip() in main.cpp."""
+    lim = 2047
+    if -lim < x < lim:
+        a = _cdiv(x << 15, lim)
+        a3 = ((a * a) >> 15) * a >> 15
+        y = a - _cdiv(a3, 3)
+        return _cdiv(((y * lim) >> 15) * 3, 2)
+    return lim if x >= 0 else -lim
+
+
+def check_output_headroom():
+    """The output stage must be loud without ever leaving the DAC range."""
+    print()
+    print("11. Output level and soft saturation")
+    ok = True
+
+    # WHY THIS EXISTS. The gain staging was sized for the worst case -
+    # eight bands wide open with a coherent input - and a real vowel uses
+    # about three bands, so the card ran roughly 10 dB quieter than it
+    # needed to. On the bench a full vowel measured about +0.5 V to -1.5 V
+    # against outputs that reach +/-6 V. Quiet signal means the noise floor
+    # sits proportionally closer to it, which is half of why the card was
+    # reported as noisy: the noise was not especially loud, the voice was
+    # especially quiet.
+    #
+    # Raising the shift alone would clip the coherent case flat, which is
+    # why the old comment forbade it. A cubic soft knee takes the headroom
+    # back instead: linear through everything ordinary, rounding over on
+    # the rare peak that would have clipped anyway.
+    GAIN_NUM, GAIN_DEN = 5, 2
+
+    def staged(x):
+        return soft_clip((x * GAIN_NUM) >> (GAIN_DEN - 1))
+
+    vowel_before = 528
+    worst_before = 1568
+    vowel_after = staged(vowel_before)
+    worst_after = staged(worst_before)
+
+    import math
+    gain_db = 20 * math.log10(vowel_after / float(vowel_before))
+    good = vowel_after > vowel_before * 2
+    if not good:
+        ok = False
+    print(f"   a vowel      {vowel_before:5d} -> {vowel_after:5d} counts"
+          f"   {gain_db:+.1f} dB   {'ok' if good else '<-- NO LOUDER'}")
+
+    good = abs(worst_after) <= 2047
+    if not good:
+        ok = False
+    print(f"   worst case   {worst_before:5d} -> {worst_after:5d} counts"
+          f"           {'ok - inside the DAC' if good else '<-- CLIPS'}")
+
+    # Monotonic, or the saturation folds and the loud peaks invert.
+    prev = None
+    mono = True
+    inrange = True
+    for x in range(-6000, 6001, 7):
+        y = staged(x)
+        if prev is not None and y < prev:
+            mono = False
+        prev = y
+        if abs(y) > 2047:
+            inrange = False
+    if not (mono and inrange):
+        ok = False
+    print(f"   monotonic across +/-6000        "
+          f"{'ok - no fold-back' if mono else '<-- FOLDS'}")
+    print(f"   never leaves +/-2047            "
+          f"{'ok' if inrange else '<-- OUT OF RANGE'}")
+
+    # Small signals must stay linear, or quiet playing gets distorted.
+    #
+    # Measured against the curve's OWN small-signal slope, not against the
+    # raw multiply. The cubic's gain at the origin is 3/2 of the nominal
+    # because the *3/2 is what puts unity at the knee, so the effective
+    # gain here is about 3.7x rather than 2.5x. Comparing to (x * 5 >> 1)
+    # measures that intended slope as if it were distortion.
+    slope = staged(400) / 400.0
+    err = max(abs(staged(x) - round(x * slope)) for x in range(-200, 201))
+    frac = err / (200 * slope)
+    good = frac <= 0.10
+    if not good:
+        ok = False
+    print(f"   small-signal error at +/-200     {err:4d} counts "
+          f"({frac * 100:.1f}%)   "
+          f"{'ok - linear where it matters' if good else '<-- DISTORTS'}")
+    print(f"   effective small-signal gain      {slope:.2f}x "
+          f"({20 * math.log10(slope):+.1f} dB)")
+    return ok
+
+
 def main():
     print("Voder end-to-end chain check - absolute levels in DAC counts")
     print(f"  pre-bank >>{PRE_SHIFT}, post-bank >>{POST_SHIFT}, "
@@ -566,6 +664,7 @@ def main():
     ok &= check_plosive_length()
     ok &= check_gain_smoothing()
     ok &= check_knob_jitter()
+    ok &= check_output_headroom()
 
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1

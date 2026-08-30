@@ -151,6 +151,33 @@ static inline int32_t Clamp15(int32_t x) {
   return x;
 }
 
+// Soft saturation into the 12-bit DAC range.
+//
+// The gain staging left 11.8 dB of headroom unused, because the shift had
+// to be sized for the WORST case - all eight bands wide open with a
+// coherent input - rather than for the vowels anyone actually plays. A
+// real vowel uses about three bands, so the card ran ~10 dB quieter than
+// it needed to and the noise floor sat correspondingly closer to the
+// signal. Measured on the bench at roughly +0.5 V to -1.5 V, where the
+// outputs can reach +/-6 V.
+//
+// A cubic soft-knee takes that headroom back without the hard clip the
+// old shift was avoiding: linear below two thirds of full scale, rounding
+// over above it, flat at the rail. The rare coherent peak saturates
+// gracefully instead of squaring off, and everything below it - which is
+// all ordinary playing - is simply louder.
+static inline int32_t SoftClip(int32_t x) {
+  constexpr int32_t kLim = 2047;
+  if (x > -kLim && x < kLim) {
+    // y = (x - x^3/3) * 3/2, in Q15 against the limit.
+    const int32_t a = (int32_t)(((int64_t)x << 15) / kLim);
+    const int32_t a3 = (int32_t)(((int64_t)a * a >> 15) * a >> 15);
+    const int32_t y = a - a3 / 3;
+    return (int32_t)((((int64_t)y * kLim) >> 15) * 3 / 2);
+  }
+  return x >= 0 ? kLim : -kLim;
+}
+
 class VoderCard : public ComputerCard {
  public:
   VoderCard() {
@@ -704,8 +731,12 @@ class VoderCard : public ComputerCard {
     diag_use_ext_ = (p.ext_input != 0);
     diag_gated_ = (p.voiced_level == 0 && p.noise_level == 0);
 
-    if (out > 2047) out = 2047;
-    if (out < -2048) out = -2048;
+    // Level, then soft saturation. See SoftClip above: the old staging was
+    // sized for a worst case that ordinary playing never reaches, which
+    // cost about 10 dB on every vowel and pushed the signal down toward
+    // the noise floor rather than the noise floor down away from it.
+    out = (out * 5) >> 1;
+    out = SoftClip(out);
 
     AudioOut1((int16_t)out);
     AudioOut2((int16_t)out);
@@ -948,8 +979,26 @@ class VoderCard : public ComputerCard {
     // the cube; opposing them crosses the middle, which is where the
     // distinct vowels are.
     if (formant_cv_ != 0) {
-      openness = Clamp15(openness + formant_cv_);
-      front = Clamp15(front - formant_cv_);
+      // WRAPPED AT THE ENDS, not clamped - or rather, centred so the clamp
+      // stops being reachable by an ordinary bipolar LFO.
+      //
+      // Clamp15 floors at 0, so with fader 1 low the negative half of a
+      // bipolar CV was swallowed whole: the vowel stopped moving for half
+      // the LFO cycle and the output jumped between "vowel present" and
+      // "vowel pinned". On a scope that reads as a half-wave rectified
+      // waveform whose offset moves with fader position, which is exactly
+      // what the bench showed.
+      //
+      // Folding the CV into the space the fader leaves means a full-swing
+      // LFO always sweeps a full vowel range, wherever the faders sit -
+      // the fader chooses the centre and the CV always gets its whole
+      // travel around it.
+      const int32_t head_o = (openness > 16384) ? (32767 - openness) : openness;
+      const int32_t head_f = (front > 16384) ? (32767 - front) : front;
+      const int32_t head = (head_o < head_f ? head_o : head_f) + 1;
+      const int32_t cv = (int32_t)(((int64_t)formant_cv_ * head) >> 15);
+      openness = Clamp15(openness + cv);
+      front = Clamp15(front - cv);
     }
 
     // CV In 2 is a bipolar FORMANT CV. It sweeps the vowel cube along its
