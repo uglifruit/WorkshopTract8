@@ -918,21 +918,14 @@ class VoderCard : public ComputerCard {
       int32_t factor = 32768 + (int32_t)(((int64_t)tilt * pos) >> 3);
       if (factor < 0) factor = 0;
       int32_t g = (int32_t)(((int64_t)gains[i] * factor) >> 15);
-      // SLEWED, not stepped.
+      // Written straight through. The smoothing happens PER SAMPLE in
+      // the engine, where it belongs - see the note in Voder::Process().
       //
-      // These are recomputed at 125 Hz, and an accelerometer streaming
-      // continuously moves the vowel on every single update. Writing them
-      // straight through puts a step in eight gains at once every 8 ms,
-      // and a step in a multiplier is a corner in the output - broadband,
-      // and heard as high-frequency noise while a tilt is moving. That is
-      // a zipper, and it was reported as exactly that.
-      //
-      // A quarter of the distance per update reaches the target in about
-      // 30 ms, which is faster than a hand moves and slow enough that no
-      // single update is audible as an edge.
-      const int32_t target = Clamp15(g);
-      const int32_t cur = g_state.band_gain[i];
-      g_state.band_gain[i] = cur + ((target - cur) >> 2);
+      // Slewing here was tried and does not work: this runs at 125 Hz, so
+      // a slew at this rate replaces one step with several smaller ones
+      // at the same rate, and the buzz is unchanged. It also stalled,
+      // because an arithmetic shift of a small positive delta is zero.
+      g_state.band_gain[i] = Clamp15(g);
     }
   }
 

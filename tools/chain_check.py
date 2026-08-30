@@ -28,6 +28,7 @@ Checks:
   6. Breath changes the character of the sound, not its level.
   7. The plosive occupies a band - neither white noise nor a thump.
   8. The default burst is a consonant length, not a drum hit.
+  9. Band gains smooth per sample and converge exactly (no stuck buzz).
 
 Run: python tools/chain_check.py
 """
@@ -387,8 +388,87 @@ def check_plosive_length():
     return good
 
 
+
+
+GAIN_SMOOTH_SHIFT = 6
+
+
+def smooth_step(cur, target):
+    """Transcription of the per-sample gain smoothing in Voder::Process()."""
+    d = (target - cur) >> GAIN_SMOOTH_SHIFT
+    if d == 0 and cur != target:
+        return cur + (1 if target > cur else -1)
+    return cur + d
+
+
+def check_gain_smoothing():
+    """Band gains must reach their target exactly, and quickly, per sample."""
+    print("\n9. Band gains are smoothed per sample and converge exactly")
+    ok = True
+
+    # THE BUG THIS GUARDS. The gains were first slewed at the CONTROL rate
+    # (125 Hz) with (target - cur) >> 2. That failed twice over.
+    #
+    # It did not remove the buzz, because slewing at the control rate just
+    # replaces one step every 8 ms with several smaller ones every 8 ms -
+    # the rate is unchanged and the rate is what is audible.
+    #
+    # And it never converged upward: an arithmetic shift of a small
+    # POSITIVE delta is zero, so a rising gain stalled a few counts short
+    # while ADC dither jittered the target around it. That is a buzz that
+    # persists after the hand stops moving and clears only when some other
+    # message shifts the target - exactly what was reported.
+    for start, target, label in ((0, 16000, "rising"),
+                                 (16000, 0, "falling"),
+                                 (16000, 16003, "rising by 3"),
+                                 (16000, 15997, "falling by 3")):
+        cur = start
+        n = 0
+        while cur != target and n < 100000:
+            cur = smooth_step(cur, target)
+            n += 1
+        good = cur == target
+        if not good:
+            ok = False
+        ms = n / 48.0
+        print(f"   {label:14} {start:6d} -> {target:6d} in {n:4d} samples "
+              f"({ms:5.2f} ms)   "
+              f"{'ok' if good else '<-- NEVER CONVERGES'}")
+
+    # The old control-rate form, for contrast: it stalls.
+    cur = 16000
+    for _ in range(1000):
+        cur = cur + ((16003 - cur) >> 2)
+    stalled = cur != 16003
+    print(f"   old >>2 form after 1000 updates: {cur} (target 16003)   "
+          f"{'stalls, as it did on hardware' if stalled else 'converged'}")
+
+    # No single sample may move the gain enough to be an edge. The worst
+    # case is the first step of the largest jump.
+    biggest = (32767 - 0) >> GAIN_SMOOTH_SHIFT
+    import math
+    db = 20 * math.log10(1 + biggest / 16000.0)
+    good = db < 0.5
+    if not good:
+        ok = False
+    print(f"   largest single-sample step {biggest} = {db:.2f} dB   "
+          f"{'ok - no edge' if good else '<-- AUDIBLE STEP'}")
+
+    # And it must settle fast enough to feel immediate.
+    cur, n = 0, 0
+    while cur != 16000 and n < 100000:
+        cur = smooth_step(cur, 16000)
+        n += 1
+    good = n / 48.0 < 20.0
+    if not good:
+        ok = False
+    print(f"   settles in {n/48.0:.1f} ms   "
+          f"{'ok - feels immediate' if good else '<-- SLUGGISH'}")
+    return ok
+
+
 def main():
-    print("TRACT8 end-to-end chain check - absolute levels in DAC counts")
+    print("Voder end-to-end chain check - absolute levels in DAC counts")
     print(f"  pre-bank >>{PRE_SHIFT}, post-bank >>{POST_SHIFT}, "
           f"per-band makeup x{BAND_MAKEUP}")
 
@@ -400,6 +480,7 @@ def main():
     ok &= check_breath_is_a_ratio()
     ok &= check_plosive_spectrum()
     ok &= check_plosive_length()
+    ok &= check_gain_smoothing()
 
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1

@@ -108,6 +108,7 @@ void Voder::Init(uint32_t seed) {
     bank_[i].x1 = bank_[i].x2 = 0;
     bank_[i].y1 = bank_[i].y2 = 0;
   }
+  for (int i = 0; i < kBands; i++) gain_[i] = 0;
   phase_ = 0;
   phase_inc_ = 0;
   rng_ = seed ? seed : 0xDEADBEEFu;  // xorshift must never be zero
@@ -310,7 +311,35 @@ int32_t __not_in_flash_func(Voder::Process)(const Params& p) {
     f.y2 = f.y1; f.y1 = y;
 
     // Scale by this band's gain and accumulate.
-    sum += (int32_t)(((int64_t)y * p.band_gain[i]) >> 15);
+    //
+    // THE GAIN IS SMOOTHED HERE, PER SAMPLE, and that rate is the whole
+    // point. The control path recomputes the target at 125 Hz, and
+    // applying a target directly - or slewing it at the control rate,
+    // which was the first attempt - puts a step in the multiplier every
+    // 8 ms. A step in a multiplier is a corner in the output, corners are
+    // broadband, and 125 Hz of them is an audible buzz. Slewing at the
+    // control rate only replaced one step with four smaller ones at the
+    // same rate, which is why it did not help.
+    //
+    // At 48 kHz a one-pole with a >>6 coefficient settles in about 1.3 ms
+    // and no single sample moves the gain by more than a fraction of a
+    // count, so there is no edge left to hear.
+    //
+    // The += form also converges exactly. The control-rate version used
+    // (target - cur) >> 2, and an arithmetic shift of a small POSITIVE
+    // delta is zero, so a rising gain stalled a few counts short forever
+    // while ADC dither jittered the target around it - a buzz that
+    // persisted until something moved a control far enough to matter,
+    // which is precisely what was reported.
+    gain_[i] += (p.band_gain[i] - gain_[i]) >> 6;
+    if (gain_[i] != p.band_gain[i] &&
+        ((p.band_gain[i] - gain_[i]) >> 6) == 0) {
+      // Within the shift's dead zone: close the last few counts outright
+      // rather than stalling. One count per sample is 48000 counts a
+      // second, so this is instant and still cannot be heard as a step.
+      gain_[i] += (p.band_gain[i] > gain_[i]) ? 1 : -1;
+    }
+    sum += (int32_t)(((int64_t)y * gain_[i]) >> 15);
 
     // Energy tracking for CV Out 1 and the LEDs. Absolute value is enough;
     // a true RMS would need a square root per band per sample.

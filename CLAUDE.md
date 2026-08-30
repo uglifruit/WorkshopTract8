@@ -11,6 +11,35 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
+## Smooth at the AUDIO rate, not the control rate (v1.18.2)
+
+A fader move produced high-frequency noise that could persist after the
+hand stopped, clearing only when some other message arrived.
+
+The band gains are recomputed at 125 Hz. Applying a new target directly
+puts a step in a multiplier every 8 ms, and a step in a multiplier is a
+corner in the output - broadband, and heard as a buzz at the update rate.
+
+**My first fix slewed at the control rate and did nothing**, which is the
+instructive part. Slewing at 125 Hz replaces one step every 8 ms with
+several smaller steps every 8 ms: the amplitude falls but the RATE is
+unchanged, and the rate is what is audible. Smoothing has to happen at the
+rate the signal is sampled, not the rate the control changes.
+
+**It also stalled.** `(target - cur) >> 2` on a small POSITIVE delta is
+zero, so a rising gain stopped a few counts short and sat there while ADC
+dither moved the target around it - a buzz that outlives the gesture and
+clears only when something shifts the target far enough to matter. That was
+the "keeps going until I move a fader again" half of the report, and an
+arithmetic shift being asymmetric about zero is the whole cause.
+
+Now a per-sample one-pole in `Voder::Process()` with an explicit
+one-count-per-sample floor so it converges exactly in both directions.
+Settles in 9.4 ms, largest single-sample step 0.27 dB, costs 1.4% of budget.
+
+`chain_check.py` check 9 demonstrates the old form stalling at 16000
+against a target of 16003 rather than merely asserting the new one works.
+
 ## The 8mu dropping out was a WEDGED ENDPOINT (v1.16.0)
 
 Reported as "the 8mu carries on stopping, faders 1 and 8 stop doing

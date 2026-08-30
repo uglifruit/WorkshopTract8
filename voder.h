@@ -154,6 +154,10 @@ class Voder {
   uint32_t Random();
 
   Biquad   bank_[kBands];
+
+  // Band gains, smoothed PER SAMPLE toward the values the control path
+  // asks for. See the note in Process().
+  int32_t  gain_[kBands];
   uint32_t phase_;          // Q32 sawtooth phase accumulator
   uint32_t phase_inc_;      // Q32 increment
   uint32_t rng_;
