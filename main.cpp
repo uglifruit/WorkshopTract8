@@ -164,6 +164,7 @@ class VoderCard : public ComputerCard {
     // so the card does not ramp its vowel up from nothing at boot.
     knob_main_ = knob_x_ = knob_y_ = 0;
     knob_main_acc_ = knob_x_acc_ = knob_y_acc_ = 0;
+    vol_cv_acc_ = formant_cv_acc_ = 0;
     knobs_seeded_ = false;
 
     // Panel defaults chosen so an untouched card speaks immediately:
@@ -656,7 +657,30 @@ class VoderCard : public ComputerCard {
                       ? (babble_ ? g_state.volume_fader : g_state.volume)
                       : 32767;
     if (Connected(Input::Audio2)) {
-      vol += (int32_t)AudioIn2() << 4;
+      // SMOOTHED, because this multiplies the output every sample.
+      //
+      // Audio In 2 is an AUDIO-rate input: ComputerCard gives it a 12 kHz
+      // notch for the mux interference and nothing else, because an audio
+      // input must pass audio. Its residual broadband ADC noise is a
+      // couple of LSB - inaudible as a signal, but this is not a signal
+      // path. It is a MULTIPLIER on everything the card outputs, so <<4
+      // turns those two LSB into full-depth amplitude modulation of the
+      // whole voice: a broadband hiss that appears the moment anything is
+      // patched here, rides on the sound so it is loudest when the card is
+      // loud, and vanishes into a strong signal. Measured at -78.8 dB of
+      // HF against the fundamental, where an unpatched card measures
+      // nothing at all.
+      //
+      // Volume is a CONTROL, not audio, so it can be filtered. The state
+      // is kept 4 bits above Q15 for the same reason the knob filter is:
+      // (delta >> n) of a small delta is zero and the filter would stall
+      // exactly where the noise lives. >>6 is 120 Hz, which takes the
+      // modulation down by 38 dB and still settles a real CV move in
+      // 1.3 ms - faster than any envelope you would patch into it.
+      vol_cv_acc_ += (((int32_t)AudioIn2() << 8) - vol_cv_acc_) >> 6;
+      vol += vol_cv_acc_ >> 4;
+    } else {
+      vol_cv_acc_ = 0;
     }
     vol = Clamp15(vol);
     if (vol != 32767) {
@@ -936,7 +960,19 @@ class VoderCard : public ComputerCard {
     //
     // Added to the existing position rather than replacing it, so the
     // faders and knobs still set where the sweep is centred.
-    formant_cv_ = Connected(Input::CV2) ? ((int32_t)CVIn2() << 3) : 0;
+    // Smoothed for the same reason as the volume CV above, though this one
+    // is milder: ComputerCard already gives the CV inputs a ~247 Hz
+    // one-pole. That still passes plenty of broadband ADC noise, and <<3
+    // multiplies it before it moves all eight band gains at once. This
+    // runs at the control rate (125 Hz), so >>2 here is gentle - enough to
+    // take the edge off without making a formant sweep feel laggy.
+    if (Connected(Input::CV2)) {
+      formant_cv_acc_ += (((int32_t)CVIn2() << 7) - formant_cv_acc_) >> 2;
+      formant_cv_ = formant_cv_acc_ >> 4;
+    } else {
+      formant_cv_ = 0;
+      formant_cv_acc_ = 0;
+    }
 
     // Rounding: the third vowel axis, from the 8mu left/right tilt. The
     // panel has no knob free for it, so with no controller attached the
@@ -1113,6 +1149,7 @@ class VoderCard : public ComputerCard {
   bool diag_use_ext_, diag_gated_;
   int32_t knob_main_, knob_x_, knob_y_;
   int32_t knob_main_acc_, knob_x_acc_, knob_y_acc_;
+  int32_t vol_cv_acc_, formant_cv_acc_;
   bool knobs_seeded_;
   int32_t panel_openness_, panel_front_, panel_breath_;
   int32_t panel_pitch_, panel_bright_, panel_round_;

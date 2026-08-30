@@ -276,6 +276,92 @@ def check_gate_chatter():
     return ok
 
 
+def check_cv_modulation_noise():
+    """A control CV must not ring-modulate the output with its own ADC noise."""
+    print()
+    print("-" * 68)
+    print("CV inputs used as CONTROLS are smoothed before they multiply")
+    ok = True
+
+    # THE BUG THIS GUARDS, and why it took five rounds to find.
+    #
+    # Audio In 2 sets volume and CV In 2 sweeps the formant axis. Both are
+    # CONTROLS, but both were read fresh every sample with a <<4 / <<3 gain
+    # and no smoothing at all.
+    #
+    # ComputerCard gives the audio inputs only a 12 kHz notch - for the mux
+    # interference - because an audio input has to pass audio. The residual
+    # broadband ADC noise is a couple of LSB: nothing as a signal, but
+    # volume is not a signal path. It MULTIPLIES the output every sample:
+    #
+    #     out = (out * vol) >> 15
+    #
+    # so two LSB times sixteen becomes full-depth amplitude modulation of
+    # the entire voice. Broadband, riding on the signal, loudest when the
+    # card is loudest, and swamped by a strong input - which is exactly how
+    # it was reported, including the detail that patching Audio In 1
+    # LESSENED it.
+    #
+    # Every earlier theory (USB contention, the control-rate zipper, ADC
+    # jitter on the KNOBS) was about the gain-target path, and each fix was
+    # real but fixed a different bug. This one is on the output multiplier,
+    # downstream of all of them, which is why smoothing the knobs and the
+    # gains never touched it.
+    import random
+
+    SHIFT = 6
+
+    def modulation_depth(smoothed):
+        random.seed(11)
+        acc = 0
+        peak = 0
+        prev = None
+        for _ in range(20000):
+            raw = random.randint(-2, 2)          # ~2 LSB of ADC noise
+            if smoothed:
+                acc += ((raw << 8) - acc) >> SHIFT
+                v = acc >> 4
+            else:
+                v = raw << 4
+            if prev is not None:
+                peak = max(peak, abs(v - prev))
+            prev = v
+        return peak
+
+    before = modulation_depth(False)
+    after = modulation_depth(True)
+    good = after * 4 <= before
+    if not good:
+        ok = False
+    print(f"   2 LSB of ADC noise on a control CV:")
+    print(f"     unsmoothed -> {before:3d} counts of step on the multiplier")
+    print(f"     smoothed   -> {after:3d} counts   "
+          f"{'ok' if good else '<-- STILL MODULATING'}")
+
+    # And it must still follow a real CV move quickly - a volume CV that
+    # lags is worse than one that hisses.
+    acc = 0
+    n = 0
+    target = 1500 << 8
+    while abs(target - acc) > (target >> 4) and n < 48000:
+        acc += (target - acc) >> SHIFT
+        n += 1
+    ms = n / 48.0
+    good = ms < 5.0
+    if not good:
+        ok = False
+    print(f"   follows a CV move in {ms:.1f} ms   "
+          f"{'ok - still feels immediate' if good else '<-- SLUGGISH'}")
+
+    # Audio In 1 must NOT be smoothed: it is summed into the excitation and
+    # genuinely carries audio. Filtering it would be a bug in the other
+    # direction, so this records the asymmetry deliberately.
+    print("   (Audio In 1 is deliberately NOT smoothed - it is summed into")
+    print("    the excitation and has to pass audio. Additive noise there")
+    print("    is not multiplied by anything.)")
+    return ok
+
+
 def main():
     print("TRACT8 CV and gate check")
     print("  Fed from random voltages, does it babble usefully?")
@@ -284,6 +370,7 @@ def main():
     ok &= check_exciter()
     ok &= check_volume_cv()
     ok &= check_gate_chatter()
+    ok &= check_cv_modulation_noise()
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1
 

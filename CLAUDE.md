@@ -11,6 +11,57 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
+## The noise was a CONTROL CV read at AUDIO rate (v1.19.0)
+
+The one that was actually reported, found after four fixes that were each
+real bugs and none of them this one.
+
+`vol` multiplies the output every sample:
+
+```cpp
+if (Connected(Input::Audio2)) vol += (int32_t)AudioIn2() << 4;
+out = (int32_t)(((int64_t)out * vol) >> 15);
+```
+
+Audio In 2 is an **audio-rate** input. ComputerCard gives it a 12 kHz notch
+for the mux interference and nothing else, because an audio input has to
+pass audio. Its residual broadband ADC noise is a couple of LSB - nothing
+as a signal. But volume is not a signal path, it is a **multiplier**, so
+`<<4` turns two LSB into full-depth amplitude modulation of the entire
+voice. Broadband, riding on the output, loudest when the card is loudest.
+
+CV In 2 had the same shape at `<<3`, feeding all eight band gains at once.
+
+**The discriminating observation was the user's, not a measurement of
+mine:** *"it lessens whenever there is audio into Audio In 1"*. Extra
+excitation making noise QUIETER means it is not being added downstream -
+it is being masked. That rules out every additive source in one sentence
+and points at a multiplier. Then *"it's there when I patch Audio 2 In,
+where there is NO throbbing LED"* killed the supply-coupling theory and
+named the input outright.
+
+**Why four correct fixes missed it.** The zipper (v1.18.2), the stalling
+slew (v1.18.2), the ADC jitter on the KNOBS (v1.18.3) and the local gain
+mirror were all on the **gain-target path**. This is on the **output
+multiplier**, downstream of all of them. Smoothing the targets could never
+touch it, and every simulation I wrote modelled the target path, so every
+simulation said the card was clean.
+
+Both control CVs are now filtered with the accumulator held 4 bits above
+Q15 - the same Q19 trick as the knobs, for the same reason: `(delta >> n)`
+of a small delta is zero and the filter would stall exactly where the noise
+lives. 64 counts of step becomes 1, and a real CV move still lands in
+3.7 ms.
+
+**Audio In 1 is deliberately NOT smoothed.** It is summed into the
+excitation and genuinely carries audio; filtering it would be a bug in the
+other direction. `cv_check.py` records that asymmetry so it is not
+"tidied up" later.
+
+**The rule: a control that MULTIPLIES needs smoothing that a control which
+ADDS does not.** Noise on an addend is noise. Noise on a multiplier is
+modulation of everything else.
+
 ## The noise was ADC JITTER, and the simulation could never see it (v1.18.3)
 
 High-frequency noise when moving faders 1, 5 or 8, persisting after the
