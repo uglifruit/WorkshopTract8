@@ -43,6 +43,34 @@ uint8_t s_status = 0;
 uint8_t s_data1 = 0;
 uint8_t s_have_data1 = 0;
 
+// Bytes handed from the USB callback to the parser.
+//
+// THE CALLBACK MUST NOT PARSE. tuh_midi_rx_cb() is invoked from inside
+// midih_xfer_cb(), BEFORE that function re-arms the IN endpoint with
+// usbh_edpt_xfer(). Every microsecond spent in the callback is time the
+// endpoint is not listening - and if the next packet arrives before the
+// re-arm, the transfer errors, the driver's TU_ASSERT returns early, and
+// THE ENDPOINT IS NEVER RE-ARMED AGAIN. The host stops polling, the device
+// times out, and USB re-enumerates.
+//
+// That is what "the 8mu keeps dropping out and then seems to power cycle"
+// was: not lost messages, a wedged endpoint. Faders 1 and 8 appeared worst
+// hit because they are the vowel axes and get moved most, so their CCs are
+// the ones most often in flight when it happened.
+//
+// So the callback now does the least possible - a memcpy into this ring -
+// and all parsing happens in the core 1 loop after tuh_task() returns,
+// with the endpoint safely re-armed.
+//
+// 2048 bytes is about 680 MIDI messages, far more than can arrive between
+// two turns of a loop that does nothing else. Written by the callback,
+// read by the loop, both on core 1, so no atomics are needed - but the
+// indices are volatile because the callback runs from interrupt context.
+constexpr uint32_t kRxRingSize = 2048;
+uint8_t s_rx_ring[kRxRingSize];
+volatile uint32_t s_rx_head = 0;
+volatile uint32_t s_rx_tail = 0;
+
 void ParseByte(uint8_t b) {
   if (b >= 0xF8) {
     // System real-time (clock, start, stop) can appear anywhere, even
@@ -133,14 +161,24 @@ static constexpr uint32_t kMaxRxBytesPerCallback = 256;
 void tuh_midi_rx_cb(uint8_t dev_addr, uint32_t num_packets) {
   if (s_dev_addr != dev_addr || num_packets == 0) return;
 
+  // Copy into the ring and return. No parsing here - see the note on
+  // s_rx_ring for why this callback has to be as short as possible.
   uint8_t cable;
-  uint8_t buf[48];
+  uint8_t buf[64];
   uint32_t drained = 0;
 
   while (drained < kMaxRxBytesPerCallback) {
     const uint32_t n = tuh_midi_stream_read(dev_addr, &cable, buf, sizeof(buf));
     if (n == 0) return;
-    for (uint32_t i = 0; i < n; i++) ParseByte(buf[i]);
+
+    uint32_t head = s_rx_head;
+    for (uint32_t i = 0; i < n; i++) {
+      const uint32_t next = (head + 1) % kRxRingSize;
+      if (next == s_rx_tail) break;   // full: drop rather than block
+      s_rx_ring[head] = buf[i];
+      head = next;
+    }
+    s_rx_head = head;
     drained += n;
   }
 }
@@ -162,5 +200,13 @@ extern "C" void core1_entry(void) {
 
   while (true) {
     tuh_task();
+
+    // Parse whatever the callback left, now that tuh_task() has returned
+    // and the IN endpoint has been re-armed. Doing it here rather than in
+    // the callback is the whole point - see s_rx_ring.
+    while (s_rx_tail != s_rx_head) {
+      ParseByte(s_rx_ring[s_rx_tail]);
+      s_rx_tail = (s_rx_tail + 1) % kRxRingSize;
+    }
   }
 }

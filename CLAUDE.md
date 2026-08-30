@@ -11,7 +11,41 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
-## Current status: v1.6.0, LIFT gestures understood at last
+## The 8mu dropping out was a WEDGED ENDPOINT (v1.16.0)
+
+Reported as "the 8mu carries on stopping, faders 1 and 8 stop doing
+anything, then it feels like it power cycles and starts reworking".
+
+That last clause is the diagnosis. A dropped message does not power cycle
+anything - a re-enumeration does. So the fault was not lost data, it was
+USB stopping entirely and the device timing out.
+
+**`tuh_midi_rx_cb()` is invoked from inside `midih_xfer_cb()`, BEFORE that
+function re-arms the IN endpoint** with `usbh_edpt_xfer()`. Everything done
+in that callback is time the endpoint is not listening. The card was
+parsing the entire MIDI stream there - up to 256 bytes, each through a
+running-status state machine, inside the driver's transfer callback.
+
+If that takes long enough for the next packet to arrive first, the transfer
+errors, the driver's `TU_ASSERT` returns early, and **the endpoint is never
+re-armed again**. The host stops polling. The device times out and resets.
+
+Faders 1 and 8 appeared worst affected because they are the vowel axes and
+get moved most, so their CCs were most often in flight when it happened.
+
+**The callback now only memcpys into a 2048-byte ring** and returns; all
+parsing happens in the core 1 loop after `tuh_task()` returns and the
+endpoint is safely re-armed. Overflow drops bytes rather than blocking,
+which is the right trade: a dropped CC is one stale fader until its next
+message, where a blocked callback is a dead controller.
+
+The driver's own RX FIFO also went from 64 bytes to 512. The default is one
+bulk endpoint's worth, and `tu_fifo` drops silently when it overflows.
+
+**Do not put work in a USB callback.** It is not an ordinary event handler;
+it runs in the driver's transfer path with the endpoint disarmed.
+
+## Previously: v1.6.0, LIFT gestures understood at last
 
 ## Previously: v1.5.0, bipolar tilt axes
 

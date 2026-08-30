@@ -33,6 +33,7 @@ Checks:
  11. Rounding on the left/right axis - the vowel cube third dimension.
  12. Mute is disabled in this build.
  13. Buttons A and D add breath while held.
+ 14. The USB callback hands off rather than parsing (endpoint wedge).
  10. A sustained MIDI flood does not stall the parser (lockup regression).
 
 Run: python tools/midi_check.py
@@ -572,6 +573,87 @@ def check_channel_agnostic():
     return ok
 
 
+
+
+RX_RING_SIZE = 2048
+
+
+def check_callback_does_not_parse():
+    """The USB callback must hand off, not parse. This is what wedged it."""
+    print("\n14. The USB callback hands off rather than parsing")
+    ok = True
+
+    # tuh_midi_rx_cb runs INSIDE midih_xfer_cb, BEFORE that function
+    # re-arms the IN endpoint with usbh_edpt_xfer. If the callback takes
+    # long enough that the next packet arrives first, the transfer errors,
+    # the driver's TU_ASSERT returns early, and the endpoint is never
+    # re-armed - the host stops polling and the device re-enumerates.
+    #
+    # Reported as "the 8mu keeps stopping, then seems to power cycle".
+    # Not lost messages: a wedged endpoint.
+    head = tail = 0
+
+    def push(n):
+        nonlocal head
+        w = 0
+        for _ in range(n):
+            nxt = (head + 1) % RX_RING_SIZE
+            if nxt == tail:
+                break
+            head = nxt
+            w += 1
+        return w
+
+    def drain():
+        nonlocal tail
+        r = 0
+        while tail != head:
+            tail = (tail + 1) % RX_RING_SIZE
+            r += 1
+        return r
+
+    wrote = push(256)
+    good = wrote == 256
+    if not good:
+        ok = False
+    print(f"   a full callback's worth ({wrote} bytes) fits   "
+          f"{'ok' if good else 'FAIL'}")
+
+    read = drain()
+    good = read == 256
+    if not good:
+        ok = False
+    print(f"   the loop drains all {read}   {'ok' if good else 'FAIL'}")
+
+    # Overflow must DROP, never block. A blocked callback is the failure
+    # mode this whole change exists to prevent.
+    head = tail = 0
+    wrote = push(RX_RING_SIZE + 500)
+    good = wrote == RX_RING_SIZE - 1
+    if not good:
+        ok = False
+    print(f"   overflow drops at capacity ({wrote}), does not block   "
+          f"{'ok' if good else 'FAIL'}")
+    drain()
+
+    # And it must survive sustained traffic without drifting.
+    head = tail = 0
+    for _ in range(50):
+        push(256)
+        drain()
+    good = head == tail
+    if not good:
+        ok = False
+    print(f"   50 push/drain cycles leave it empty   "
+          f"{'ok' if good else '<-- INDEX DRIFT'}")
+
+    capacity_msgs = (RX_RING_SIZE - 1) // 3
+    print(f"   capacity {capacity_msgs} MIDI messages between loop turns")
+    print("   (a dropped CC is one stale fader; a blocked callback is a")
+    print("    dead 8mu until it re-enumerates - so dropping is correct)")
+    return ok
+
+
 def main():
     print("TRACT8 8mu MIDI check: faders 34 openness, 41 front, 36 breath,")
     print("  37 pitch, 38 bright, 40 volume; lifts 42/43 vol, 44/45 round")
@@ -585,6 +667,7 @@ def main():
     ok &= check_round()
     ok &= check_mute()
     ok &= check_button_breath()
+    ok &= check_callback_does_not_parse()
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1
 

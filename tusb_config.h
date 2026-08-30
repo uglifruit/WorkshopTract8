@@ -57,6 +57,21 @@
 // through usbh_app_driver_get_cb() in usb_midi_host_app_driver.c, and it
 // does its own descriptor parsing - it does not need this macro.
 
+// RX FIFO for the MIDI host driver, bytes.
+//
+// The driver defaults this to one bulk endpoint's worth - 64 bytes, or 16
+// USB-MIDI packets. An 8mu streams six accelerometer controllers
+// continuously and adds fader traffic on top, so 64 bytes is one
+// scheduling hiccup away from overflowing, and tu_fifo drops silently when
+// it does: a CC vanishes mid-stream and that fader stops responding until
+// its next message.
+//
+// 512 bytes is 128 packets, which is more than arrives between two turns
+// of the core 1 loop by a wide margin. It costs 448 bytes of RAM against
+// the 20% currently used.
+#define CFG_TUH_MIDI_RX_BUFSIZE   512
+#define CFG_TUH_MIDI_EP_BUFSIZE   64
+
 // Device-name strings from the 8mu. Cheap, and useful when debugging which
 // controller actually enumerated.
 #define CFG_MIDI_HOST_DEVSTRINGS    1
