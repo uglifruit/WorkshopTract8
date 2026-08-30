@@ -57,7 +57,12 @@ CC_LIFT_RIGHT = 45
 TILT_VOLUME_RANGE = 32767
 CC_NOT_INVERTED = 48  # right way up - unmute
 CC_INVERTED = 49      # upside down - mute
-BUTTON_BREATH = 9000
+# Transcribed from midi8mu.h. Was 9000 and reported as too hissy;
+# adding noise actually LOWERS the level about 2.4 dB, because the
+# crossfade removes buzz faster than noise replaces it through a
+# bandpass bank - so "too loud" meant too much hiss in the character,
+# not more level.
+BUTTON_BREATH = 4500
 RX_RING_SIZE = 2048
 NOTE_MUTE = 36
 NOTE_GATE = 48
@@ -596,6 +601,16 @@ def check_button_breath():
 
     total = (127 << 8) + 2 * BUTTON_BREATH
     print(f"   fader full + both buttons = {total}, clamped in main.cpp   ok")
+
+    # One button must be a gesture ON the voice, not a separate noise
+    # source laid over it. Past about a fifth of the range the hiss stops
+    # reading as breath and starts reading as a mix of two things.
+    frac = BUTTON_BREATH / 32768.0
+    good = 0.05 <= frac <= 0.20
+    if not good:
+        ok = False
+    print(f"   one button adds {frac * 100:.0f}% noise   "
+          f"{'ok - breathy, not hissy' if good else '<-- TOO MUCH'}")
     return ok
 
 

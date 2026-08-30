@@ -120,8 +120,8 @@ once, so a frozen card looks exactly like a broken one; the flat even glow
 is unlike any other display on the card and says which it is. Button 1's
 mute dims all six further still.
 
-**Buttons 2 and 4 also add breath** — about a quarter of the range, on top
-of wherever the breath fader is parked. Both buttons already did something
+**Buttons 2 and 4 also add breath** — about a seventh of the range each, on
+top of wherever the breath fader is parked. Both buttons already did something
 and neither used its held state for anything else, so the gesture is free:
 press one over a voiced sound and it goes breathy without losing the pitch.
 It is an addition, not a setting, so it layers on the fader rather than
@@ -210,6 +210,19 @@ Breath changes how *breathy* the voice is.
 ## The plosive
 
 The click is a short bandpassed burst, roughly 600–2800 Hz.
+
+## Building
+
+```bash
+cmake -B build -G Ninja
+cmake --build build
+```
+
+Drag `build/tract8.uf2` onto the Pico in bootloader mode. A released binary
+is committed at `UF2/tract8.uf2`.
+
+Twelve host-side test scripts live in `tools/` and need `numpy`; run them
+individually. See `CLAUDE.md` for what each one pins down and why.
 
 ## Credits
 

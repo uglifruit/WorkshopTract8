@@ -704,14 +704,39 @@ All four cases are in `tools/midi_check.py` checks 6 and 7.
 
 ```
 voder.cpp     excitation + 8-band filter bank  (filter_check, excite_check)
-vowels.h      vowel gain vectors               (vowel_check)
-midi8mu.cpp   8mu CC/note dispatch             (midi_check)
+vowels.h      vowel gain vectors               (playable_check)
+midi8mu.cpp   8mu CC/note dispatch             (midi_check, gesture_check)
 usb_core1.cpp Core 1 USB pump + MIDI parser    (midi_check, checks 6-7)
-main.cpp      panel, CV, LEDs, core scheduling
+main.cpp      panel, CV, LEDs, core scheduling (chain_check, cv_check,
+                                                babble_check, autochat_check)
 ```
 
 Each test names its file and each file names its test. **If you change a DSP
-file, re-run the matching test — they take seconds.**
+file, re-run the matching test — they take seconds.** They need `numpy` and
+are run individually; there is no runner, which is deliberate — the output
+of each is a table you read, not a green tick.
+
+| Tool | Pins down |
+|---|---|
+| `filter_check.py` | Band geometry, Q15 quantisation error, IIR stability |
+| `excite_check.py` | polyBLEP aliasing vs naive saw, noise whiteness |
+| `chain_check.py` | Absolute levels in DAC counts, gain smoothing, output limiter, mux lock |
+| `playable_check.py` | The vowel cube, panel reclaim, does the knob still work |
+| `midi_check.py` | 8mu dispatch, running status, USB callback handoff |
+| `gesture_check.py` | Accelerometer LIFT semantics — models the DEVICE, not us |
+| `cv_check.py` | Do random voltages actually babble; control-CV smoothing |
+| `babble_check.py` | BABBLE structure and boot-mode detection |
+| `autochat_check.py` | Phrase structure — does it have lungs |
+| `silence_check.py` | No single jack fault may mute the card |
+| `init_check.py` | The filter bank is usable before `main()` runs |
+| `budget_check.py` | Cycle estimate — **a prediction, not a measurement** |
+
+**Several of these exist because a bug reached hardware that a proxy
+measurement had declared healthy.** They test the property that would sound
+wrong, not something correlated with it. `gesture_check.py` is the model
+for that: it simulates what an 8mu actually puts on the wire rather than
+transcribing what the firmware expects, because *a test that models the
+component under test cannot find a bug in the model.*
 
 `tools/budget_check.py` is a **model, not a measurement**, and it says so
 loudly. WorkshopSpectral modelled 51% and measured 231% on real silicon. **CV

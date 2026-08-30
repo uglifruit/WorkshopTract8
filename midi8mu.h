@@ -126,7 +126,16 @@ static constexpr uint8_t kNoteFreeze = 72;   // C5
 // How much breath buttons A and D add while held, Q15. A whisper of noise
 // under a voiced sound is what makes it breathy rather than buzzy; enough
 // to hear, not enough to swamp the buzz.
-static constexpr int32_t kButtonBreath = 9000;
+// 4500 of 32768, so one button adds about 14% noise to whatever the
+// breath fader is set to and both together add 27%.
+//
+// It was 9000 and reported as too loud - meaning too HISSY, not louder:
+// adding noise actually drops the level about 2.4 dB, because the
+// crossfade takes buzz away faster than noise replaces it through a
+// bandpass bank. At 27% for a single button the hiss stopped reading as
+// breath on a voice and started reading as a separate noise source
+// mixed in over the top.
+static constexpr int32_t kButtonBreath = 4500;
 
 // Feed one decoded MIDI channel-voice message in. Status is the full byte
 // including channel; the channel is ignored.
