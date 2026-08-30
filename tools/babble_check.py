@@ -27,8 +27,16 @@ The second is the chatter rate. The syllable and the gap between syllables
 have to be related, or the mode does not do what its name says. The first
 version ran the rate from the click length itself (125 Hz, a buzz) to
 250 ms while the click could be a full second, so bursts overlapped into a
-wash - wrong at both ends. It now runs 2 to 20 Hz with each syllable voiced
-for the first third of its period.
+wash - wrong at both ends. It now runs 2 to 20 Hz with each syllable voiced for
+three quarters of its period.
+
+The duty cycle started at one third and was reported as staccato and
+separated - "that's not like speech", which is right. Connected speech is
+mostly voiced: vowels and sonorants run into one another and the only
+silence is the stop closures, 40-80 ms inside a syllable of 200-400 ms.
+Three quarters puts a mid-knob syllable at 206 ms voiced and 69 ms silent,
+which is what that describes. The gap must not vanish, though - above about
+90% the syllables stop being separable and it becomes a drone.
 
 THE CHATTER NO LONGER FIRES CLICKS. It gated a plosive on every syllable,
 which put a click on the front of each one and made the mode read as
@@ -210,12 +218,13 @@ def check_chatter_rate():
     for k in (0, 8192, 16384, 24576, 32767):
         decay = 32767 - k          # X inverted: clockwise is faster
         per = period_samples(decay)
-        on = per // 3
-        off = per - on
+        on = per - (per >> 2)      # 75% voiced
+        off = per >> 2
         hz = FS / per
-        # The 2 ms glottal ramp has to open AND close inside the voiced
-        # part, or a fast syllable never reaches full level.
-        fits = on > GATE_RAMP * 2
+        # The gap is now the short part, so it is the gap that has to
+        # stay long enough - if it closes entirely the syllables merge
+        # into a drone and the articulation is lost.
+        fits = off > GATE_RAMP * 2
         if not fits:
             ok = False
         print(f"   {k:5d}   {hz:5.1f} Hz  {on/48.0:6.1f}ms  {off/48.0:6.1f}ms"

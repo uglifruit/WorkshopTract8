@@ -84,8 +84,15 @@ struct VoderState {
   // held, so the card can be played as a percussive voice.
   uint8_t click_gate;
 
-  uint8_t gate_voiced;
-  uint8_t gate_noise;
+  // Button 1 mutes while held. A momentary mute is worth a button on a
+  // card that can drone indefinitely, where gating the buzz separately
+  // from the noise was not - the breath control already covers that, and
+  // did it better.
+  uint8_t midi_mute;
+
+  // Incremented by button 2. Counted, not flagged, for the same reason
+  // plosives are: a flag set on core 1 can be missed or double-read.
+  uint32_t random_count;
   uint8_t freeze;
   uint8_t midi_connected;
 

@@ -6,9 +6,6 @@
 namespace tract8 {
 
 
-// Toggle edge state for the freeze button.
-static bool s_freeze_held = false;
-
 // A 7-bit CC scaled to Q15. 127 gives 32512, which is 0.07 dB shy of full
 // scale - close enough to read as fully open, and it avoids a branch to
 // special-case the top value.
@@ -177,64 +174,67 @@ static void HandleCc(uint8_t cc, uint8_t v) {
   }
 }
 
+static void HandleNoteOff(uint8_t note) {
+  if (note == kNoteMute) {
+    g_state.midi_mute = 0;
+    g_state.breath_button_a = 0;
+  } else if (note == kNoteFreeze) {
+    g_state.freeze = 0;
+    g_state.breath_button_d = 0;
+  }
+}
+
 static void HandleNoteOn(uint8_t note, uint8_t vel) {
   // A note-on with velocity 0 is the running-status note-off.
   if (vel == 0) {
-    if (note == kNoteVoiced) {
-      g_state.click_gate = 0;
-      g_state.gate_voiced = 0;
-      g_state.breath_button_a = 0;
-    } else if (note == kNoteNoise) {
-      g_state.gate_noise = 0;
-    } else if (note == kNoteFreeze) {
-      s_freeze_held = false;
-      g_state.breath_button_d = 0;
-    }
+    HandleNoteOff(note);
     return;
   }
 
   switch (note) {
-    case kNoteVoiced:
-      // Button 1 is the TRIGGER. It fires the click and holds it open for
-      // as long as it is held, so the card can be played percussively -
-      // short taps at a short decay setting, sustained tones at a long
-      // one. It still opens the voiced gate, so the buzz sounds through
-      // it, and still adds breath.
-      g_state.click_gate = 1;
-      g_state.plosive_count++;
-      g_state.gate_voiced = 1;
+    case kNoteMute:
+      // Button 1 MUTES while held.
+      //
+      // It used to gate the voiced buzz, which was useless: the breath
+      // control already sets the buzz/noise balance and does it better,
+      // so the button duplicated a knob nobody needed duplicated. A
+      // momentary mute is worth a button on a card that drones
+      // indefinitely - it is the one thing you cannot do with a knob
+      // without losing your place.
+      g_state.midi_mute = 1;
       g_state.breath_button_a = 1;
       break;
-    case kNoteNoise:
-      g_state.gate_noise = 1;
+
+    case kNoteRandom:
+      // Button 2 jumps to a new sound. Counted, not flagged - see
+      // shared.h.
+      g_state.random_count++;
       break;
+
     case kNotePlosive:
-      // Counted, not flagged - see shared.h.
       g_state.plosive_count++;
       break;
+
     case kNoteFreeze:
-      // Toggle on the rising edge only, so holding does not chatter it.
-      if (!s_freeze_held) {
-        g_state.freeze ^= 1;
-        s_freeze_held = true;
-      }
+      // Button 4 freezes the formants WHILE HELD, and it used to latch.
+      //
+      // The latch was reported as the card locking up, and that is a fair
+      // reading of what it did: freeze blocks openness, front, rounding
+      // and the panel morph all at once, so a frozen card looks exactly
+      // like a card that has stopped working. With nothing on the panel
+      // saying otherwise there was no way to tell the difference.
+      //
+      // Momentary makes cause and effect obvious - frozen while your
+      // finger is down, not otherwise - and every LED now goes to half
+      // brightness while it is held, so the state is unmistakable even if
+      // the button sticks. Anything worth holding indefinitely can be
+      // held.
+      g_state.freeze = 1;
       g_state.breath_button_d = 1;
       break;
+
     default:
       break;
-  }
-}
-
-static void HandleNoteOff(uint8_t note) {
-  if (note == kNoteVoiced) {
-    g_state.click_gate = 0;
-    g_state.gate_voiced = 0;
-    g_state.breath_button_a = 0;
-  } else if (note == kNoteNoise) {
-    g_state.gate_noise = 0;
-  } else if (note == kNoteFreeze) {
-    s_freeze_held = false;
-    g_state.breath_button_d = 0;
   }
 }
 

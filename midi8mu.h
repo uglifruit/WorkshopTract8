@@ -33,7 +33,7 @@
 // hardware rounds were lost to assuming otherwise - see midi8mu.cpp.
 //   CC 49            MUTE       LOW value = turned over = muted
 //   CC 46, 47        unassigned
-//   Note 36 (C2)     TRIGGER - fires the click and holds it open
+//   Note 36 (C2)     MUTE while held - silences the card
 //   Note 48 (C3)     unvoiced noise gate
 //   Note 60 (C4)     plosive burst
 //   Note 72 (C5)     formant freeze, and adds breath
@@ -117,8 +117,8 @@ static constexpr uint8_t kCcInverted = 49;
 static constexpr int32_t kTiltVolumeRange = 32767;
 
 // Button notes.
-static constexpr uint8_t kNoteVoiced = 36;   // C2
-static constexpr uint8_t kNoteNoise = 48;    // C3
+static constexpr uint8_t kNoteMute = 36;     // C2, button 1
+static constexpr uint8_t kNoteRandom = 48;   // C3, button 2
 static constexpr uint8_t kNotePlosive = 60;  // C4
 static constexpr uint8_t kNoteFreeze = 72;   // C5
 
