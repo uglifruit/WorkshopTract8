@@ -3,14 +3,14 @@ Name: Voder
 Description: The 1939 Bell Labs Voder - a filter and formant based voice-synthesis machine, invented by Homer Dudley - played by hand from the panel or from a Music Thing 8mu over USB MIDI Host.
 Language: C++ (ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: "1.17.1"
-Status: Working on hardware
+Version: "1.18.0"
+Status: Released
 License: MIT
 repository: https://github.com/uglifruit/WorkshopTract8
 Editor: none
-date: 2026-08-28
+date: 2026-08-30
 
-# TRACT8 is an original implementation after Homer Dudley's Voder (Bell Labs,
+# Voder is an original implementation after Homer Dudley's machine (Bell Labs,
 # 1939). No code from the original survives - it was relays and vacuum tubes -
 # so the debt is conceptual rather than legal.
 #
@@ -26,7 +26,7 @@ contact:
 
 uf2:
   - path: UF2/tract8.uf2
-    name: Voder 1.17.1
+    name: Voder 1.18.0
 
 tags:
   - synth
@@ -40,62 +40,54 @@ tags:
 
 summary: |
   The Voder was the first machine that could talk, demonstrated at the 1939
-  World's Fair. It had no vocabulary and no text input: it made two raw
-  sounds, a buzz and a hiss, and a trained operator shaped them into speech
-  in real time using ten finger keys, a wrist bar and a foot pedal. Operators
-  trained for months to speak with it.<br><br>
+  New York World's Fair and invented by Homer Dudley at Bell Labs. It had no
+  vocabulary and no text input: it made two raw sounds, a buzz and a hiss,
+  and a trained operator shaped them into speech in real time using ten
+  finger keys, a wrist bar and a foot pedal. Operators trained for
+  months.<br><br>
 
-  TRACT8 is that instrument with eight bands instead of ten, because eight
-  bands map one fader each onto a Music Thing 8mu - and that physical
-  correspondence, one finger per formant, is the whole reason the card is
-  playable rather than merely programmable.<br><br>
+  This card is that instrument with eight bandpass filters instead of ten,
+  played from its own panel or from a Music Thing 8mu over USB MIDI Host. It
+  is not a vocoder and not a text-to-speech engine - nothing analyses an
+  input signal and nothing knows what a word is. What comes out is whatever
+  your hands put in.<br><br>
 
-  Plug an 8mu into the front USB-C jack and it works immediately, with
-  nothing to configure. The vowel is a point in a three-dimensional space -
-  how open the mouth is, whether the tongue is forward or back, and how far
-  the lips are rounded - and every vowel lives somewhere in that cube, with
-  diphthongs on the way between. Openness and front are the outermost two
-  faders, 1 and 8, so the hand spans the device; rounding is the left-right
-  lift of the controller. Fader 3 is breath, the buzz-to-noise balance,
-  fader 4 is pitch and fader 5 is brightness.<br><br>
+  Turning the card on gives BABBLE, where each knob drives several things at
+  once so it talks from a single gate with nothing else attached. Main
+  sweeps the vowel and the pitch together, X sets how fast and bright the
+  syllables are, and Y runs from a rounded hum to a breathy whisper. Switch
+  up for a second page that shapes the voice itself rather than what it is
+  saying: size, animation and consonants. Holding the momentary switch for
+  two seconds starts it talking by itself in phrases, with pauses long
+  enough to read as breaths.<br><br>
 
-  Volume is fader 7 plus the front-back lift: the fader sets a base level
-  and lifting the front or back of the controller swings a full scale
-  either side of it, so a phrase can be swelled and ducked without letting
-  go of anything. The response favours staying audible, so holding the
-  controller roughly level costs nothing.<br><br>
+  Holding the switch down at power-on gives the deliberate mode instead, one
+  knob to one parameter, where the vowel is a point in a three-dimensional
+  space: how open the mouth is, whether the tongue is forward or back, and
+  how far the lips are rounded. Every vowel lives somewhere in that cube,
+  with diphthongs on the way between.<br><br>
 
-  The four buttons gate the buzz, gate the noise, fire plosive consonants
-  and latch a formant freeze; the first and last also add a little breath
-  while held, so a voiced sound can be made breathy without reaching for
-  the fader.<br><br>
+  With an 8mu the two vowel axes are on faders 1 and 8, the outermost pair,
+  so the hand spans the device; rounding is the left-right lift of the
+  controller. Fader 3 is breath, fader 4 pitch, fader 5 brightness, fader 7
+  volume, and faders 2 and 6 shape the plosive. Tilting front to back swings
+  the volume either side of the fader, so a phrase can be swelled and ducked
+  without letting go of anything.<br><br>
 
-  Faders 2, 6 and 7 are deliberately left unassigned. An earlier version
-  gave each fader one filter band and it was unplayable: a vowel is a
-  position of the mouth, not eight independent numbers, and shaping one
-  meant operating seven faders at once - which is the Voder original
-  problem, the one its operators trained for months to overcome.<br><br>
-
-  With no controller attached the card is still complete. Knob 1 morphs
-  through six vowels, Knob 2 opens and closes the mouth, and Knob 3
-  crossfades buzz to hiss. Switch up puts F0 on Knob 1 instead. The panel
-  and the 8mu write the same eight gains with neither taking priority, so
-  there is no mode to be in - move whichever control is under your hand.<br><br>
-
-  Patch Audio In 1 and your own signal replaces the internal excitation
-  entirely, turning the card into an eight-band formant filter played by
-  hand. CV In 1 is 1V/oct for the buzz, Pulse In 1 fires plosives and Pulse
-  In 2 is a glottal gate.<br><br>
+  Every CV input adds to its control rather than replacing it, so a random
+  voltage wanders the sound around wherever the knobs are parked and nothing
+  goes dead when a cable goes in. CV In 2 sweeps the vowel cube diagonally,
+  which is the input to patch a sample-and-hold into. Audio In 1 sums with
+  the internal sources rather than replacing them, so the card can speak
+  over whatever is patched in, both shaped by the same vowel.<br><br>
 
   Technical: eight 2-pole IIR bandpass sections at 250, 450, 700, 1000,
   1400, 1900, 2600 and 3800 Hz, Q=4, entirely fixed point with Q15
-  coefficients - Q13 was tried and put the lowest band 74 cents flat. The
-  buzz is a polyBLEP-corrected sawtooth, which buys about 5 dB of alias
-  rejection in the bands that matter. Core 0 runs the 48 kHz audio
-  interrupt at 192 MHz; Core 1 owns the TinyUSB host stack and nothing
-  else. All code is copied to RAM to keep flash-cache jitter out of the
-  audio path. CV Out 2 reports the measured DSP load, which is the only
-  figure worth believing - the modelled prediction is 44%.
+  coefficients. The buzz is a polyBLEP-corrected sawtooth. Core 0 runs the
+  48 kHz audio interrupt at 192 MHz; Core 1 owns the TinyUSB host stack and
+  nothing else, and never parses inside a USB callback. All code is copied
+  to RAM to keep flash-cache jitter out of the audio path. CV Out 2 reports
+  the measured DSP load.
 
 panel:
   inputs:
@@ -167,26 +159,62 @@ panel:
       description: High while formant freeze is latched.
 
 controls:
+  # BABBLE is the DEFAULT boot mode - just turn the card on. Holding the
+  # switch Down at power-on gives the deliberate one-knob-one-parameter
+  # mode instead. Even boot LEDs mean BABBLE, odd mean the alt mode.
   knobs:
-    - when: "Switch Middle or Down"
+    - when: "BABBLE page 1 - Switch Middle or Down (default boot)"
       main:
-        name: VOWEL
+        name: VOWEL SWEEP
         description: >
-          Morphs through six vowels - AH, OH, OO, UH, EH, EE - crossfading
-          the eight band gains between adjacent entries. The order traces a
-          lap of the vowel quadrilateral, so sweeping slowly is the nearest
-          this card gets to a diphthong.
+          Walks the vowel diagonally across the cube while raising the
+          pitch with it - one knob for a whole spoken gesture.
       x:
+        name: CHATTER
+        description: >
+          Syllable rate and brightness together, 2 to 20 Hz. Faster and
+          brighter are the two things that make speech sound hurried.
+      y:
+        name: CHARACTER
+        description: >
+          Breath against rounding - a rounded hum at one end, a breathy
+          whisper at the other.
+    - when: "BABBLE page 2 - Switch Up (default boot)"
+      main:
+        name: VOICE SIZE
+        description: >
+          Pitch, brightness and vowel placement together, from a small
+          bright voice to a large dark one. Page 1 is what is said; page 2
+          is who is saying it.
+      x:
+        name: ANIMATION
+        description: >
+          How far the voice wanders between syllables, from a monotone to
+          muttering. Drawn per syllable and held, which is how speech
+          moves.
+      y:
+        name: CONSONANTS
+        description: >
+          How many syllables get a plosive, and how loud. Capped short of
+          every syllable, which would read as percussion rather than
+          speech.
+
+  knobs_alt:
+    - when: "Deliberate mode page 1 - Switch Middle or Down (hold Down at power-on)"
+      main:
         name: OPENNESS
         description: >
-          Tilts the band gains toward the high or low end - mouth openness,
-          or brightness. Multiplicative, so it never closes a band entirely.
-      y:
-        name: SOURCE
+          The vowel cube's first axis - how far the jaw is open (F1).
+      x:
+        name: FRONT
         description: >
-          Crossfades the excitation from all buzz (anticlockwise) to all
-          noise (clockwise). The Voder's wrist bar, made continuous.
-    - when: "Switch Up"
+          The vowel cube's second axis - where the tongue sits (F2).
+      y:
+        name: BREATH
+        description: >
+          Buzz to noise. A ratio rather than a level: it changes how
+          breathy the voice is, not how loud.
+    - when: "Deliberate mode page 2 - Switch Up"
       main:
         name: PITCH
         description: Base F0 for the buzz oscillator, 50 to 500 Hz.
@@ -196,28 +224,9 @@ controls:
       y:
         name: ROUNDING
         description: >
-          The third vowel axis - lip rounding, toward the OO corner of the
-          cube. Between the two pages the panel reaches every parameter the
-          8mu can.
-  knobs_alt:
-    - when: "BABBLE (default boot)"
-      main:
-        name: SWEEP
-        description: >
-          Walks the vowel diagonally across the cube while raising the
-          pitch with it - one knob for a whole spoken gesture.
-      x:
-        name: CHATTER
-        description: >
-          Chatter rate and brightness together, 2 to 20 Hz. Each
-          syllable is voiced for a third of its period so they always
-          separate. The chatter makes no clicks of its own - patch those
-          into Pulse In 1 if they are wanted.
-      y:
-        name: CHARACTER
-        description: >
-          Breath against rounding - a rounded hum at one end, a breathy
-          whisper at the other.
+          The vowel cube's third axis - lip rounding, toward the OO
+          corner. Between the two pages the panel reaches every parameter
+          the 8mu can.
 
   leds:
     - when: "Running"
@@ -240,14 +249,64 @@ controls:
           description: Lit while a USB MIDI controller is mounted.
         - id: 5
           name: Voiced
+          description: Bright while voiced, dim while unvoiced.
+    - when: "Formants frozen (8mu button 4 held)"
+      display: list
+      items:
+        - id: 0
+          name: All six at half brightness
           description: >
-            Bright while voiced, dim while unvoiced, full brightness while
-            formant freeze is latched.
+            Freeze stops openness, front, rounding and the vowel morph at
+            once, so a frozen card looks exactly like a broken one. A flat
+            even glow is unlike every other display on the card - the band
+            meters vary, the diagnostics are on/off per LED, the splash
+            chases - so it cannot be mistaken for any of them.
+    - when: "Muted (8mu button 1 held)"
+      display: list
+      items:
+        - id: 0
+          name: All six dim
+          description: >
+            The same idea, dimmer still, since silence is even easier to
+            mistake for a fault than a stuck vowel.
+    - when: "Auto-chatter engaging (momentary switch held in BABBLE)"
+      display: list
+      items:
+        - id: 0
+          name: Progress bar
+          description: >
+            The LEDs fill left to right over the two-second hold. A hold
+            with no feedback feels broken long before it completes.
+    - when: "Auto-chatter running"
+      display: list
+      items:
+        - id: 5
+          name: Syllable
+          description: >
+            Pulses with each syllable, so the panel shows the card is
+            talking by itself rather than merely left switched on.
+    - when: "Switch Down (deliberate mode)"
+      display: list
+      items:
+        - id: 0
+          name: Gated
+          description: Excitation is gated shut - no buzz, no noise.
+        - id: 1
+          name: External
+          description: External audio is reaching the filter bank.
+        - id: 2
+          name: Frozen
+          description: Formant freeze is latched.
+        - id: 3
+          name: Silent bands
+          description: All eight band gains are near zero.
     - when: "Boot"
       display: list
       items:
         - id: 0
           name: Splash
           description: >
-            A chase across all six LEDs for the first 0.75 s while the DAC
-            settles and the USB host stack comes up. Audio is muted.
+            A chase across all six LEDs while the switch is still settling,
+            then even LEDs for BABBLE or odd for the deliberate mode. The
+            mode is never guessed at: nothing is shown until the switch has
+            been read once, after the full boot window.

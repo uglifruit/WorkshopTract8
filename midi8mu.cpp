@@ -178,6 +178,8 @@ static void HandleNoteOff(uint8_t note) {
   if (note == kNoteMute) {
     g_state.midi_mute = 0;
     g_state.breath_button_a = 0;
+  } else if (note == kNoteGate) {
+    g_state.midi_gate = 0;
   } else if (note == kNoteFreeze) {
     g_state.freeze = 0;
     g_state.breath_button_d = 0;
@@ -205,24 +207,16 @@ static void HandleNoteOn(uint8_t note, uint8_t vel) {
       g_state.breath_button_a = 1;
       break;
 
-    case kNoteRandom:
-      // Button 2 is DELIBERATELY UNASSIGNED.
+    case kNoteGate:
+      // Button 2 is a GATE, indistinguishable from one patched into
+      // Pulse In 2.
       //
-      // It briefly drew a whole new voice, and that was removed after it
-      // caused trouble on hardware: the draw jumped pitch by up to 1.6
-      // octaves per press, which is far too wide for something meant to
-      // sound like the same voice saying something different, and the 8mu
-      // was also reported hanging while it was in use.
-      //
-      // The wide pitch range was my error and is easy to fix. The hang was
-      // never diagnosed - it may have been this button or it may have been
-      // the USB path it shares with the others. Removing the feature
-      // removes both symptoms, but if a hang is ever seen on button 3 or 4
-      // then this was not the cause and the fault is elsewhere.
-      //
-      // A random voice is worth having. It should come back only with a
-      // narrow pitch range - a few semitones, not octaves - and only once
-      // the hang is understood rather than merely avoided.
+      // It briefly drew a random voice instead, which was removed after
+      // it jumped pitch by up to 1.6 octaves per press and the 8mu was
+      // reported hanging while it was in use. A gate is the better use of
+      // the button anyway: it is the one thing that makes the card speak
+      // on demand without a cable, and in BABBLE it starts the chatter.
+      g_state.midi_gate = 1;
       break;
 
     case kNotePlosive:

@@ -118,7 +118,7 @@ static constexpr int32_t kTiltVolumeRange = 32767;
 
 // Button notes.
 static constexpr uint8_t kNoteMute = 36;     // C2, button 1
-static constexpr uint8_t kNoteRandom = 48;   // C3, button 2
+static constexpr uint8_t kNoteGate = 48;     // C3, button 2
 static constexpr uint8_t kNotePlosive = 60;  // C4
 static constexpr uint8_t kNoteFreeze = 72;   // C5
 

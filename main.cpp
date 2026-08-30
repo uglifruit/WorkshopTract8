@@ -223,6 +223,7 @@ class VoderCard : public ComputerCard {
     g_state.breath_button_a = 0;
     g_state.breath_button_d = 0;
     g_state.midi_mute = 0;
+    g_state.midi_gate = 0;
     g_state.freeze = 0;
     g_state.midi_connected = 0;
     g_state.plosive_count = 0;
@@ -449,8 +450,16 @@ class VoderCard : public ComputerCard {
     // misdetected jack leaves the card droning (recoverable, obvious)
     // rather than silent (looks broken). A real gate patched in takes
     // control the first time it rises.
+    // Button 2 on the 8mu is OR'd in here, so a held button and a gate
+    // patched into Pulse In 2 are the same thing to everything downstream.
+    //
+    // gate_seen_ still latches only on the JACK. A button press must not
+    // make the card think a cable has appeared: if it did, releasing the
+    // button would leave the gate closed and the card silent with nothing
+    // patched, which is the failure mode the latch exists to prevent.
     if (PulseIn2()) gate_seen_ = true;
-    const bool ext_gate = gate_seen_ ? PulseIn2() : true;
+    const bool jack_gate = gate_seen_ ? PulseIn2() : true;
+    const bool ext_gate = jack_gate || g_state.midi_gate;
     // The 8mu no longer gates the sources separately - button 1 is a
     // mute now, and breath already covers the buzz/noise balance better
     // than two buttons could.
@@ -539,8 +548,10 @@ class VoderCard : public ComputerCard {
     //
     // AUTO-CHATTER supplies its own gate when engaged, so the same code
     // path runs whether the gate came from a jack or from here.
-    const bool chatter_gate = auto_chatter_ ? AutoChatterGate()
-                                            : (pulse1 || PulseIn2());
+    const bool chatter_gate = auto_chatter_
+                                  ? AutoChatterGate()
+                                  : (pulse1 || PulseIn2() ||
+                                     g_state.midi_gate);
 
     if (babble_ && chatter_gate) {
       const int32_t period =

@@ -33,17 +33,19 @@ your hands put in.
 
 ## Two modes
 
-**BABBLE is what you get by turning the card on.** Every knob drives several
-things at once, so it talks from a single gate with nothing else attached.
+| | How to get it | What it is | Boot LEDs |
+|---|---|---|---|
+| **MAIN BOOT** | Just turn the card on | **BABBLE** — every knob drives several things at once, so it talks from a single gate with nothing else attached | **even** (0, 2, 4) |
+| **ALT BOOT** | **Hold the switch down** at power-on | **Deliberate** — one knob, one parameter | **odd** (1, 3, 5) |
 
-**Hold the switch down at power-on** for the deliberate mode, where one knob
-is one parameter. Odd boot LEDs confirm it.
+The switch is only read once, after the boot window has fully elapsed, so
+the mode never latches on an unsettled reading.
 
 ---
 
-## BABBLE (the default)
+## MAIN BOOT — BABBLE
 
-### Page 1 — *what is said* (switch middle)
+### Page 1 — *what is said* (switch middle or down)
 
 | Knob | Controls |
 |---|---|
@@ -83,7 +85,9 @@ effort, stopping it does not.
 
 ---
 
-## The deliberate mode (hold switch down at power-on)
+## ALT BOOT — the deliberate mode
+
+*Hold the switch down while powering on to reach this mode.*
 
 | Switch | Knob 1 (Main) | Knob 2 (X) | Knob 3 (Y) |
 |---|---|---|---|
@@ -118,11 +122,15 @@ Plug it into the front USB-C jack. Nothing to configure — the card reads the
 | Lift back / front | CC 43 / 42 | **Volume** — back swells, front ducks |
 | Lift left / right | CC 44 / 45 | **Rounding** — the third vowel axis |
 | **Button 1** | Note 36 (C2) | **Mute** while held |
-| Button 2 | Note 48 (C3) | *unassigned* |
+| **Button 2** | Note 48 (C3) | **Gate** — exactly as a cable in Pulse In 2 |
 | **Button 3** | Note 60 (C4) | Plosive burst |
 | **Button 4** | Note 72 (C5) | **Freeze** the formants while held |
 
 Channel-agnostic — set the 8mu to any channel.
+
+**Button 2 is a gate.** Holding it is indistinguishable from a gate patched
+into Pulse In 2 — it opens the voice, and in BABBLE it starts the chatter. So
+the card can be played from the 8mu alone, with nothing in the jacks.
 
 **Button 4 freezes while held, and every LED goes to half brightness while
 it does.** Freeze stops openness, front, rounding and the vowel morph all at

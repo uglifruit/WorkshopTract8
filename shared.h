@@ -90,6 +90,14 @@ struct VoderState {
   // did it better.
   uint8_t midi_mute;
 
+  // Button 2 acts exactly as a gate patched into Pulse In 2: it opens the
+  // voice, and in BABBLE it drives the syllable chatter. A held button and
+  // a held gate are the same thing to everything downstream, which is why
+  // this is one flag OR'd into the existing path rather than a parallel
+  // mechanism - the alternative would be two ways to gate the card that
+  // could disagree.
+  uint8_t midi_gate;
+
   uint8_t freeze;
   uint8_t midi_connected;
 

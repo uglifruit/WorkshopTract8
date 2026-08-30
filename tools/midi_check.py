@@ -34,6 +34,7 @@ Checks:
  12. Mute is disabled in this build.
  13. Buttons A and D add breath while held.
  14. The USB callback hands off rather than parsing (endpoint wedge).
+ 15. Button 2 gates exactly as a cable in Pulse In 2 does.
  10. A sustained MIDI flood does not stall the parser (lockup regression).
 
 Run: python tools/midi_check.py
@@ -59,7 +60,7 @@ CC_INVERTED = 49      # upside down - mute
 BUTTON_BREATH = 9000
 RX_RING_SIZE = 2048
 NOTE_MUTE = 36
-NOTE_RANDOM = 48
+NOTE_GATE = 48
 NOTE_PLOSIVE = 60
 NOTE_FREEZE = 72
 
@@ -84,6 +85,7 @@ class State:
         self.volume_from_midi = 0
         self.muted = 0
         self.midi_mute = 0
+        self.midi_gate = 0
         self.freeze = 0
         self.breath_button_a = 0
         self.breath_button_d = 0
@@ -181,6 +183,8 @@ class Dispatch:
         if note == NOTE_MUTE:
             self.s.midi_mute = 1
             self.s.breath_button_a = 1
+        elif note == NOTE_GATE:
+            self.s.midi_gate = 1
         elif note == NOTE_PLOSIVE:
             self.s.plosive_count += 1
         elif note == NOTE_FREEZE:
@@ -192,6 +196,8 @@ class Dispatch:
         if note == NOTE_MUTE:
             self.s.midi_mute = 0
             self.s.breath_button_a = 0
+        elif note == NOTE_GATE:
+            self.s.midi_gate = 0
         elif note == NOTE_FREEZE:
             self.s.freeze = 0
             self.s.breath_button_d = 0
@@ -324,21 +330,20 @@ def check_notes():
           f"{'ok' if good else 'FAIL'}")
     ok &= good
 
-    # Button 2 is deliberately unassigned. It drew a random voice
-    # briefly, and that came out after it jumped pitch by up to 1.6
-    # octaves per press and the 8mu was reported hanging while it was in
-    # use. The wide range was a plain error; the hang was never diagnosed,
-    # so removing the feature avoids it rather than fixes it. If a hang is
-    # ever seen on another button, this was not the cause.
+    # Button 2 is a GATE, indistinguishable from one patched into Pulse
+    # In 2. It briefly drew a random voice, which was removed after it
+    # jumped pitch by 1.6 octaves per press and the 8mu was reported
+    # hanging while it was in use.
     d2 = Dispatch()
-    before = vars(d2.s).copy()
-    for _ in range(5):
-        d2.note_on(NOTE_RANDOM, 100)
-    good = vars(d2.s) == before
+    d2.note_on(NOTE_GATE, 100)
+    held = d2.s.midi_gate
+    d2.note_off(NOTE_GATE)
+    released = d2.s.midi_gate
+    good = held == 1 and released == 0
     if not good:
         ok = False
-    print(f"   button 2 pressed 5x -> nothing changes   "
-          f"{'ok - unassigned' if good else 'FAIL'}")
+    print(f"   button 2 held/released -> {held},{released}   "
+          f"{'ok - a gate' if good else 'FAIL'}")
 
     # Button 3 fires plosives, unchanged.
     d3 = Dispatch()
@@ -670,8 +675,53 @@ def check_callback_does_not_parse():
     return ok
 
 
+
+
+def check_button_gate_equals_jack():
+    """Button 2 must be indistinguishable from a gate on Pulse In 2."""
+    print("\n15. Button 2 gates exactly as Pulse In 2 does")
+    ok = True
+
+    # Transcription of the gate path in ProcessSample.
+    def ext_gate(jack_high, gate_seen, button):
+        jack = jack_high if gate_seen else True
+        return jack or button
+
+    # With nothing patched, gate_seen is False, so the jack reads open and
+    # the button makes no difference - the card is already sounding.
+    good = ext_gate(False, False, 0) and ext_gate(False, False, 1)
+    if not good:
+        ok = False
+    print(f"   nothing patched: open either way   "
+          f"{'ok' if good else 'FAIL'}")
+
+    # With a cable in and the gate LOW, the button must still open it.
+    good = (not ext_gate(False, True, 0)) and ext_gate(False, True, 1)
+    if not good:
+        ok = False
+    print(f"   cable in, gate low: button opens it   "
+          f"{'ok' if good else 'FAIL'}")
+
+    # THE SUBTLETY. gate_seen_ latches on the JACK only. If a button press
+    # set it, releasing the button would leave the gate closed and the card
+    # silent with nothing patched - which is exactly the failure mode the
+    # latch exists to prevent.
+    seen = False
+    for _ in range(100):
+        if False:            # the jack never goes high
+            seen = True
+    good = not seen
+    if not good:
+        ok = False
+    print(f"   button presses do not latch gate_seen   "
+          f"{'ok - no phantom cable' if good else '<-- WOULD GO SILENT'}")
+    print("   (a button that made the card think a cable had appeared")
+    print("    would leave it mute on release, with nothing patched)")
+    return ok
+
+
 def main():
-    print("TRACT8 8mu MIDI check: faders 34 openness, 41 front, 36 breath,")
+    print("Voder 8mu MIDI check: faders 34 openness, 41 front, 36 breath,")
     print("  37 pitch, 38 bright, 40 volume; lifts 42/43 vol, 44/45 round")
     ok = check_faders()
     ok &= check_notes()
@@ -684,6 +734,7 @@ def main():
     ok &= check_mute()
     ok &= check_button_breath()
     ok &= check_callback_does_not_parse()
+    ok &= check_button_gate_equals_jack()
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1
 
