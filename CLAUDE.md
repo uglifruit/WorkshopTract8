@@ -61,10 +61,21 @@ rail.
 | v1.20.0 cubic | 1705 | **-28 dB** |
 | v1.22.0 limiter | 1320 | **-92 dB** |
 
-The gain stays at x2.5 deliberately. x3.5 would recover the last 2.2 dB
-and put a vowel back *above* the knee, which is precisely where the
-distortion was. +8 dB of the original headroom win survives, and that was
-the point of v1.20.0.
+### The gain was then set from a scope, not the model (v1.22.1)
+
+x2.5 shipped first and measured +/-2 V typical with momentary peaks near
++/-3 V, against rails of +/-6 V - a third of the range. The model's "a
+vowel peaks at 528 counts" is AH with the vowel table at its peak, and
+real playing is about **half** that: 273 typical, 409 peak.
+
+**Size the stage from the PEAK, not the average.** At x3.5 a momentary
+peak lands at 1431 against the 1500 knee - still exactly linear, 4.2 V of
+a possible 6. x4 was tried and puts that peak at 1636, over the knee and
+into the landing curve, which is the v1.20.0 mistake in miniature: sizing
+for the average and letting the peaks bend.
+
+`chain_check.py` check 11 now asserts against 409, the measured peak,
+rather than its own optimistic 528.
 
 **The rule: a saturating curve must have a linear region big enough for
 the signal that normally passes through it.** "Soft" is not automatically

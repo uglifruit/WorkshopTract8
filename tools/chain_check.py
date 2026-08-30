@@ -593,10 +593,10 @@ def check_output_headroom():
     # why the old comment forbade it. A cubic soft knee takes the headroom
     # back instead: linear through everything ordinary, rounding over on
     # the rare peak that would have clipped anyway.
-    GAIN_NUM, GAIN_DEN = 5, 2
+    GAIN_NUM, GAIN_DEN = 7, 2
 
     def staged(x):
-        return soft_clip((x * GAIN_NUM) >> (GAIN_DEN - 1))
+        return soft_clip(x * GAIN_NUM // GAIN_DEN)
 
     vowel_before = 528
     worst_before = 1568
@@ -654,7 +654,13 @@ def check_output_headroom():
 
     # And a real vowel must sit below the knee at the shipped gain, or the
     # linear region is not where the music is.
-    vowel_staged = (528 * 5) >> 1
+    #
+    # 409 counts - the momentary PEAK from a scope, not the 528 this file
+    # computes for AH at the table peak and not the 273 typical level.
+    # The model figure is optimistic by about 2x, and sizing the stage
+    # from it left the card using a third of its range. Sizing from the
+    # AVERAGE instead would let peaks bend, which is the v1.20.0 mistake.
+    vowel_staged = 409 * 7 // 2
     good = vowel_staged <= 1500
     if not good:
         ok = False

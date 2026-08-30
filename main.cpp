@@ -754,13 +754,20 @@ class VoderCard : public ComputerCard {
 
     // Level, then limiting. See SoftClip above.
     //
-    // x2.5 puts a vowel at about 1320 counts - below the 1500 knee, so it
-    // passes through EXACTLY linear, and +8 dB on the original >>2
-    // staging. The v1.20.0 build used the same multiply into a cubic and
-    // measured 28 dB of THD at this level; the same vowel now measures
-    // -92 dB. Raising this to x3.5 would recover the last 2.2 dB and put
-    // the vowel back above the knee, which is where the distortion was.
-    out = (out * 5) >> 1;
+    // x3.5, set from a SCOPE READING rather than from the model. The model
+    // assumes a vowel peaks near 528 counts before this stage, which is AH
+    // with the vowel table at its peak - optimistic by about a factor of
+    // two. On the bench at x2.5 real playing measured +/-2 V typical with
+    // momentary peaks near +/-3 V, so the true figures are about 273 and
+    // 409 counts and the card was using a third of its range.
+    //
+    // The PEAK is what has to stay under the knee, not the average. At
+    // x3.5 a momentary peak lands at 1432 against the 1500 knee - clean,
+    // at about 4.2 V of a possible 6 V, with a typical vowel at 2.8 V.
+    // x4 was tried first and puts that same peak at 1636, over the knee
+    // and into the landing curve, which is exactly the mistake v1.20.0
+    // made: sizing the stage for the average and letting the peaks bend.
+    out = (out * 7) >> 1;
     out = SoftClip(out);
 
     AudioOut1((int16_t)out);
