@@ -637,7 +637,8 @@ def check_output_headroom():
 
     # Below the knee the stage must be EXACTLY linear - not approximately.
     #
-    # This is the whole point of the change. v1.20.0 used a cubic, which
+    # This is the whole point of the change. An earlier version used a
+    # cubic soft clipper, which
     # bends from the very first sample: there is no linear region at all,
     # so every vowel was distorted all the time. 28 dB of THD at ordinary
     # playing level, heard on the bench as a whine that tracked the volume
@@ -659,7 +660,7 @@ def check_output_headroom():
     # computes for AH at the table peak and not the 273 typical level.
     # The model figure is optimistic by about 2x, and sizing the stage
     # from it left the card using a third of its range. Sizing from the
-    # AVERAGE instead would let peaks bend, which is the v1.20.0 mistake.
+    # AVERAGE instead would let peaks bend, which was the earlier mistake.
     vowel_staged = 409 * 7 // 2
     good = vowel_staged <= 1500
     if not good:

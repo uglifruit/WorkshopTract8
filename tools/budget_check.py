@@ -152,8 +152,8 @@ def main():
 
     print("\n  MEASURED ON HARDWARE, and this model was wrong.")
     print()
-    print("    v1.22.x, int64 filter bank : predicted 44.2%, MEASURED ~100%")
-    print("    v1.23.0, int32 filter bank : MEASURED 60% typical, 70% peak")
+    print("    int64 filter bank : predicted 44.2%, MEASURED ~100%")
+    print("    int32 filter bank : MEASURED 60% typical, 70% peak")
     print()
     print("  The model does not know that (int64_t)a * b is a CALL to")
     print("  __aeabi_lmul on an M0+ rather than an instruction, nor what")
@@ -163,7 +163,7 @@ def main():
     print("  CV Out 2 carried this measurement and now carries the vowel")
     print("  instead - the number stopped changing, and the jack was")
     print("  worth more than the meter. To measure again, put the")
-    print("  timing back around the ISR body; see CLAUDE.md v1.23.0.")
+    print("  timing back around the ISR body; see docs/BRINGUP.md.")
 
     # This script cannot fail: it measures nothing. It exists to inform,
     # and to be replaced by a hardware reading.

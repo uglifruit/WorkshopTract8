@@ -222,7 +222,8 @@ Drag `build/tract8.uf2` onto the Pico in bootloader mode. A released binary
 is committed at `UF2/tract8.uf2`.
 
 Twelve host-side test scripts live in `tools/` and need `numpy`; run them
-individually. See `CLAUDE.md` for what each one pins down and why.
+individually. `docs/BRINGUP.md` is the hardware checklist, and names the
+fault each section guards against.
 
 ## Credits
 
