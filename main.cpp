@@ -160,7 +160,11 @@ class VoderCard : public ComputerCard {
     boot_splash_ = kBootSplash;
     panel_phase_ = 0;
     morph_phase_ = 0;
+    // Seeded on the first pass through ReadPanel rather than at zero,
+    // so the card does not ramp its vowel up from nothing at boot.
     knob_main_ = knob_x_ = knob_y_ = 0;
+    knob_main_acc_ = knob_x_acc_ = knob_y_acc_ = 0;
+    knobs_seeded_ = false;
 
     // Panel defaults chosen so an untouched card speaks immediately:
     // a mid-open back vowel, moderate pitch, flat brightness, all buzz.
@@ -747,12 +751,57 @@ class VoderCard : public ComputerCard {
   }
 
   void __not_in_flash_func(ReadPanel)() {
-    // One knob per sample, round-robin.
+    // One knob per sample, round-robin, FILTERED IN HIGHER PRECISION.
+    //
+    // A raw RP2040 ADC reading jitters by a few LSB continuously, and
+    // KnobVal() << 3 turns every one of those into 8 counts of Q15. Fed
+    // into the vowel blend that moves the band gains a few counts every
+    // control block, forever: the gain smoother settles in about 9 ms and
+    // a freshly jittered target arrives every 8 ms, so the gains never
+    // settle at all. The result is a continuous modulation at the control
+    // rate - a buzz that does not stop when the hand leaves the knob, and
+    // whose loudness depends on where the knob sits, because ADC noise is
+    // not uniform across the range.
+    //
+    // The filter state is kept at Q19 - the 12-bit reading shifted up by
+    // 7 - and only shifted down to Q15 on the way out. That extra
+    // precision is the point, and it took two attempts to see why:
+    // filtering directly in Q15 does almost nothing, because (delta >> n)
+    // of a small delta is zero and the filter stalls exactly where the
+    // jitter lives. Same trap as the gain slew, one level up.
+    //
+    // >>5 leaves about 10 counts of residual against 24 unfiltered, and
+    // settles a real knob move in 11 ms.
     switch (panel_phase_) {
-      case 0: knob_main_ = KnobVal(Knob::Main) << 3; break;
-      case 1: knob_x_ = KnobVal(Knob::X) << 3; break;
-      default: knob_y_ = KnobVal(Knob::Y) << 3; break;
+      case 0:
+        knob_main_acc_ +=
+            (((int32_t)KnobVal(Knob::Main) << 7) - knob_main_acc_) >> 5;
+        knob_main_ = knob_main_acc_ >> 4;
+        break;
+      case 1:
+        knob_x_acc_ +=
+            (((int32_t)KnobVal(Knob::X) << 7) - knob_x_acc_) >> 5;
+        knob_x_ = knob_x_acc_ >> 4;
+        break;
+      default:
+        knob_y_acc_ +=
+            (((int32_t)KnobVal(Knob::Y) << 7) - knob_y_acc_) >> 5;
+        knob_y_ = knob_y_acc_ >> 4;
+        break;
     }
+
+    // First time through, take the readings whole rather than filtering
+    // up from zero.
+    if (!knobs_seeded_) {
+      knob_main_acc_ = (int32_t)KnobVal(Knob::Main) << 7;
+      knob_x_acc_ = (int32_t)KnobVal(Knob::X) << 7;
+      knob_y_acc_ = (int32_t)KnobVal(Knob::Y) << 7;
+      knob_main_ = knob_main_acc_ >> 4;
+      knob_x_ = knob_x_acc_ >> 4;
+      knob_y_ = knob_y_acc_ >> 4;
+      knobs_seeded_ = true;
+    }
+
     if (++panel_phase_ >= kPanelDiv) panel_phase_ = 0;
 
     const Switch sw = SwitchVal();
@@ -1063,6 +1112,8 @@ class VoderCard : public ComputerCard {
   bool babble_;
   bool diag_use_ext_, diag_gated_;
   int32_t knob_main_, knob_x_, knob_y_;
+  int32_t knob_main_acc_, knob_x_acc_, knob_y_acc_;
+  bool knobs_seeded_;
   int32_t panel_openness_, panel_front_, panel_breath_;
   int32_t panel_pitch_, panel_bright_, panel_round_;
   uint32_t last_plosive_;

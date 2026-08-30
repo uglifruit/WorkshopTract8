@@ -11,6 +11,40 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
+## The noise was ADC JITTER, and the simulation could never see it (v1.18.3)
+
+High-frequency noise when moving faders 1, 5 or 8, persisting after the
+hand stopped and varying with where the fader was left.
+
+**Three wrong theories first, all disproved by measurement:** USB bus
+contention jittering sample timing (impossible - AudioOut1 writes a buffer
+that ComputerCard clocks out by DMA at a fixed rate); volatile reads costing
+RAM bandwidth (mirroring the gains locally moved the ISR's load/store count
+from 176 to 175, so that change was reverted rather than shipped); and the
+control-rate zipper (real, fixed in v1.18.2, but not the whole story).
+
+**The simulation said moving and static were identical, -33.3 vs -33.4 dB.**
+It was right, and it was measuring the wrong thing: every test fed the vowel
+blend CLEAN values. A raw RP2040 ADC reading jitters a few LSB continuously,
+and `KnobVal() << 3` turns each LSB into 8 counts of Q15. The gain smoother
+settles in ~9 ms; a freshly jittered target arrives every 8 ms. So the gains
+chase a target that never stops moving, with or without a hand on the knob.
+
+That is both halves of the report at once: a buzz that outlives the gesture,
+and a loudness that depends on knob position because ADC noise is not
+uniform across the range.
+
+**The filter state must be higher precision than its output.** Filtering in
+Q15 barely helped - 24 counts down to 20 - because `(delta >> n)` of a small
+delta is zero and the filter stalls exactly where the jitter lives. That is
+the same trap as the gain slew, one level up. Keeping the accumulator at Q19
+and shifting down on the way out gives 10 counts, settling a real move in
+11 ms.
+
+**What settled it was asking two discriminating questions** rather than
+theorising further: does it happen with no 8mu (yes), and does CV In 2
+provoke it (yes). Both answers moved the search out of USB entirely.
+
 ## Smooth at the AUDIO rate, not the control rate (v1.18.2)
 
 A fader move produced high-frequency noise that could persist after the
@@ -39,6 +73,24 @@ Settles in 9.4 ms, largest single-sample step 0.27 dB, costs 1.4% of budget.
 
 `chain_check.py` check 9 demonstrates the old form stalling at 16000
 against a target of 16003 rather than merely asserting the new one works.
+
+## A stale device address made the 8mu look alive but do nothing (v1.18.3)
+
+Reported as the 8mu "seemingly working - lights lit, responding to wiggles -
+just not making any changes to the sound". That is not a connection failure,
+it is the card discarding valid messages.
+
+`tuh_midi_rx_cb()` dropped anything whose address did not match `s_dev_addr`,
+and `tuh_midi_mount_cb()` only accepted a device when `s_dev_addr` was zero.
+So any divergence between the card's idea of the address and reality - a
+spurious umount, a missed mount, a half-completed enumeration - was
+PERMANENT: every later mount refused, every message dropped, and the device
+itself still lit and sending.
+
+Both now recover. The mount callback always takes the newest device, and the
+RX callback adopts whatever address is genuinely sending. Neither can be
+wrong: something is talking on a MIDI IN endpoint and this card listens to
+exactly one device.
 
 ## The 8mu dropping out was a WEDGED ENDPOINT (v1.16.0)
 

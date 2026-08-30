@@ -29,6 +29,7 @@ Checks:
   7. The plosive occupies a band - neither white noise nor a thump.
   8. The default burst is a consonant length, not a drum hit.
   9. Band gains smooth per sample and converge exactly (no stuck buzz).
+ 10. ADC jitter on a still knob does not reach the band gains.
 
 Run: python tools/chain_check.py
 """
@@ -467,6 +468,89 @@ def check_gain_smoothing():
     return ok
 
 
+
+
+KNOB_FILTER_SHIFT = 5
+ADC_JITTER_LSB = 3
+
+
+def check_knob_jitter():
+    """A still knob must produce a still sound."""
+    print("\n10. ADC jitter does not reach the band gains")
+    ok = True
+
+    # THE BUG THIS GUARDS, AND WHY THE SIMULATION MISSED IT FOR THREE
+    # ROUNDS. Everything upstream of the knobs was modelled with clean
+    # values, so the moving-vs-static comparison came out identical and
+    # said the smoothing was fine. It was. The targets were not.
+    #
+    # A raw RP2040 ADC reading jitters a few LSB continuously, and
+    # KnobVal() << 3 turns each LSB into 8 counts of Q15. The gain
+    # smoother settles in about 9 ms; a freshly jittered target arrives
+    # every 8 ms. So the gains chase a target that never stops moving,
+    # whether or not a hand is on the knob - a buzz that outlives the
+    # gesture and whose loudness depends on where the knob sits.
+    import random
+
+    def unfiltered(n=20000):
+        random.seed(1)
+        peak = 0
+        for _ in range(n):
+            raw = 2048 + random.randint(-ADC_JITTER_LSB, ADC_JITTER_LSB)
+            peak = max(peak, abs((raw << 3) - (2048 << 3)))
+        return peak
+
+    def filtered(n=80000):
+        random.seed(1)
+        acc = 2048 << 7
+        peak = 0
+        for _ in range(n):
+            raw = (2048 + random.randint(-ADC_JITTER_LSB,
+                                         ADC_JITTER_LSB)) << 7
+            acc += (raw - acc) >> KNOB_FILTER_SHIFT
+            peak = max(peak, abs((acc >> 4) - (2048 << 3)))
+        return peak
+
+    before = unfiltered()
+    after = filtered()
+    good = after < before / 2
+    if not good:
+        ok = False
+    print(f"   {ADC_JITTER_LSB} LSB of ADC noise -> {before} counts raw, "
+          f"{after} filtered   {'ok' if good else '<-- STILL NOISY'}")
+
+    # Filtering in Q15 rather than Q19 does almost nothing, because the
+    # shift of a small delta is zero and the filter stalls exactly where
+    # the jitter is. That was the first attempt.
+    random.seed(1)
+    cur = 2048 << 3
+    peak = 0
+    for _ in range(80000):
+        raw = (2048 + random.randint(-ADC_JITTER_LSB,
+                                     ADC_JITTER_LSB)) << 3
+        cur += (raw - cur) >> 4
+        peak = max(peak, abs(cur - (2048 << 3)))
+    print(f"   filtering in Q15 instead leaves {peak} counts   "
+          f"{'(the first attempt - barely helped)' if peak > after else ''}")
+
+    # And it must still follow a real knob move quickly.
+    acc = 0
+    n = 0
+    target = 2048 << 7
+    while abs(target - acc) > (50 << 4) and n < 100000:
+        acc += (target - acc) >> KNOB_FILTER_SHIFT
+        n += 1
+    ms = n / 16.0
+    good = ms < 25.0
+    if not good:
+        ok = False
+    print(f"   follows a knob move in {ms:.1f} ms   "
+          f"{'ok - feels immediate' if good else '<-- SLUGGISH'}")
+    print("   (the state is kept at Q19 and shifted down to Q15 on the way")
+    print("    out; the extra precision is what stops the filter stalling)")
+    return ok
+
+
 def main():
     print("Voder end-to-end chain check - absolute levels in DAC counts")
     print(f"  pre-bank >>{PRE_SHIFT}, post-bank >>{POST_SHIFT}, "
@@ -481,6 +565,7 @@ def main():
     ok &= check_plosive_spectrum()
     ok &= check_plosive_length()
     ok &= check_gain_smoothing()
+    ok &= check_knob_jitter()
 
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1

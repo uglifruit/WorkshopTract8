@@ -121,10 +121,24 @@ void tuh_midi_mount_cb(uint8_t dev_addr, uint8_t in_ep, uint8_t out_ep,
                        uint8_t num_cables_rx, uint16_t num_cables_tx) {
   (void)in_ep; (void)out_ep; (void)num_cables_rx; (void)num_cables_tx;
 
-  if (s_dev_addr == 0) {
-    s_dev_addr = dev_addr;
-    g_state.midi_connected = 1;
-  }
+  // Always take the newest device, rather than only accepting one when no
+  // address is held.
+  //
+  // The old form ignored a mount whenever s_dev_addr was already set. That
+  // sounds harmless - the front jack is a single port - but it makes a
+  // stale address unrecoverable: if the card ever holds an address the
+  // device no longer has, every subsequent mount is refused and every
+  // message is dropped by the address check in tuh_midi_rx_cb(). The 8mu
+  // sits there with its lights on, responding to its own faders, changing
+  // nothing.
+  s_dev_addr = dev_addr;
+  g_state.midi_connected = 1;
+
+  // A fresh device means a fresh stream. Any half-parsed running-status
+  // message from the previous session would otherwise consume the first
+  // byte of this one.
+  s_status = 0;
+  s_have_data1 = 0;
 }
 
 void tuh_midi_umount_cb(uint8_t dev_addr, uint8_t instance) {
@@ -167,7 +181,26 @@ void tuh_midi_umount_cb(uint8_t dev_addr, uint8_t instance) {
 static constexpr uint32_t kMaxRxBytesPerCallback = 64;
 
 void tuh_midi_rx_cb(uint8_t dev_addr, uint32_t num_packets) {
-  if (s_dev_addr != dev_addr || num_packets == 0) return;
+  if (num_packets == 0) return;
+
+  // ADOPT whatever device is actually sending, rather than dropping
+  // everything that does not match the address we think we hold.
+  //
+  // This is the recovery path for the failure above. If the card's idea of
+  // the address ever diverges from reality - a spurious umount, a missed
+  // mount, an enumeration that half-completed - the old check turned that
+  // into permanent silence: data was arriving and being thrown away, with
+  // the device's own lights still on to say it was working.
+  //
+  // Taking the address from the data that is genuinely arriving cannot be
+  // wrong: something is talking to us on a MIDI IN endpoint, and this card
+  // listens to exactly one device.
+  if (s_dev_addr != dev_addr) {
+    s_dev_addr = dev_addr;
+    g_state.midi_connected = 1;
+    s_status = 0;
+    s_have_data1 = 0;
+  }
 
   // Copy into the ring and return. No parsing here - see the note on
   // s_rx_ring for why this callback has to be as short as possible.
