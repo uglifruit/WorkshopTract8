@@ -11,6 +11,53 @@ structure where they fit.
 original implementation: the Voder was relays and vacuum tubes, so there is no
 code to port and the debt is conceptual.
 
+## CV Out 2 read 5 V: the bank was 64-bit for no reason (v1.23.0)
+
+The measurement the log kept asking for, finally taken, and it said what
+WorkshopSpectral's did: **the model was wrong by more than 2x.**
+`budget_check.py` predicted 44.2%; CV Out 2 read about 5 V, which is the
+clamp - the ISR was using essentially its entire 20.83 us.
+
+The measurement itself was checked before believing it. `time_us_32()` has
+1 us resolution against a 20.83 us budget, which sounds far too coarse -
+but the truncation is UNBIASED (the delta is floor(T) or ceil(T) depending
+where the microsecond boundary falls, averaging to T), and the figure is
+accumulated over 256 samples. The scaling checks out at exactly 2047 for
+100%. The reading was real.
+
+**The cost was `int64` in the filter bank.** The M0+ has no 64-bit
+multiply, so every `(int64_t)a * b` is a call to `__aeabi_lmul` - three per
+band, 24 per sample, plus a dozen more in the excitation path.
+
+`PICO_INT64_OPS_IN_RAM=1` was already set and verified (`__wrap___aeabi_lmul`
+at 0x2000a514, which is RAM). That was worth 40 points of load and is still
+necessary. It just was not enough, because the right answer is not to make
+the calls fast but to not make them.
+
+**The width was never needed, and that had to be PROVED rather than
+argued.** An int32 that wraps does not clip, it INVERTS, and a resonator
+fed its own inverted output is an explosion rather than a distortion. Two
+bounds:
+
+- Driving every band at its own centre frequency - the worst case for a
+  resonator - plus squares, noise and DC: worst accumulator 2.0e8 against
+  int32's 2.1e9. **10.7x margin.**
+- The algebraic bound, every term at maximum with the same sign
+  simultaneously, which no signal can produce: 1.2e9. **1.79x margin.**
+
+The second needed one extra bit of input headroom, so `excite >>= 3`
+became `>>= 4` and the output shift `>>2` became `>>1`. Level is
+identical - `chain_check.py` still measures a vowel at 528 counts and the
+worst case at 1568.
+
+`filter_check.py` now carries both bounds as a permanent check, because
+this is exactly the kind of change that looks fine for months and then
+detonates on one unusual input.
+
+**The rule: `int64` on an M0+ is a function call, not an instruction.**
+Reach for it only when a bound has been computed and genuinely exceeds
+2^31, and re-derive that bound if the gain staging ever moves.
+
 ## The whine was MY soft clipper, and a cubic has no linear region (v1.22.0)
 
 The v1.20.0 fix for the card being too quiet introduced the whine that
@@ -739,9 +786,12 @@ transcribing what the firmware expects, because *a test that models the
 component under test cannot find a bug in the model.*
 
 `tools/budget_check.py` is a **model, not a measurement**, and it says so
-loudly. WorkshopSpectral modelled 51% and measured 231% on real silicon. **CV
-Out 2 is the authority on this card's cost.** Once TRACT8 has run on hardware,
-replace the prediction with the reading.
+loudly. WorkshopSpectral modelled 51% and measured 231% on real silicon.
+**CV Out 2 is the authority on this card's cost**, and it has now been
+read: it showed ~100% against a predicted 44.2%, which is what prompted
+the 32-bit rewrite of the filter bank in v1.23.0. The model still does not
+know what `__aeabi_lmul` costs in context; treat its number as a lower
+bound and read the jack.
 
 ## They are LIFT gestures (v1.6.0)
 
@@ -1093,11 +1143,11 @@ it are playable; volume behaves; the output is clean at the current gain.
 
 Genuinely open:
 
-- [ ] **Read CV Out 2 and replace `budget_check.py`'s 44.2% prediction
-      with the measurement.** The script says loudly that it is a model,
-      and WorkshopSpectral modelled 51% against 231% measured. The
-      firmware computes the real figure and puts it on the jack; nobody
-      has read it yet.
+- [ ] **Re-read CV Out 2 after the v1.23.0 32-bit rewrite.** The first
+      reading was ~5 V, essentially 100% of budget, against a predicted
+      44.2% - that is what prompted the rewrite. Removing 36
+      `__aeabi_lmul` calls per sample should move it a long way, but the
+      only figure worth quoting is the one on the jack.
 - [ ] Confirm the USB lockup is gone. It took sustained fader plus
       accelerometer traffic to provoke, so it needs deliberate
       reproduction rather than absence of reports. Three separate causes

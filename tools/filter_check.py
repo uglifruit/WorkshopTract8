@@ -243,6 +243,84 @@ def check_headroom():
     return ok
 
 
+INT32_MAX = 2**31 - 1
+EXCITE_SHIFT = 4      # voder.cpp: excite >>= EXCITE_SHIFT
+
+
+def check_accumulator_width():
+    """The biquad accumulator must not overflow int32."""
+    print()
+    print("The 32-bit accumulator cannot wrap")
+    ok = True
+
+    # WHY THIS MATTERS. The bank used int64 accumulators, and on an M0+
+    # with no 64-bit multiply that is three __aeabi_lmul CALLS per band,
+    # 24 per sample. CV Out 2 measured the ISR at essentially 100% of its
+    # 20.83 us budget; budget_check.py had predicted 44%.
+    #
+    # The width was never needed - but "never needed" has to be proved,
+    # not asserted, because an int32 that wraps does not clip, it INVERTS,
+    # and a resonator fed its own inverted output is an explosion rather
+    # than a distortion. This drives every band at its own centre
+    # frequency, which is the worst case for a resonator, plus squares,
+    # noise and DC.
+    import random
+    import math
+
+    max_excite = (32767 * 2 + 32768) >> EXCITE_SHIFT
+    worst = 0
+    worst_case = ""
+
+    random.seed(9)
+    for f0 in BAND_HZ:
+        _, _, _, b0, a1, a2 = quantised_coeffs(f0)
+        for shape in ("sine", "square", "noise", "dc"):
+            x1 = x2 = y1 = y2 = 0
+            for n in range(8000):
+                if shape == "sine":
+                    x = int(max_excite * math.sin(2 * math.pi * f0 * n / FS))
+                elif shape == "square":
+                    x = max_excite if (n * f0 // FS) % 2 else -max_excite
+                elif shape == "noise":
+                    x = random.randint(-max_excite, max_excite)
+                else:
+                    x = max_excite
+                acc = b0 * (x - x2) - a1 * y1 - a2 * y2
+                if abs(acc) > worst:
+                    worst = abs(acc)
+                    worst_case = f"{shape} at {f0} Hz"
+                y = -((-acc) >> COEFF_SHIFT) if acc < 0 else acc >> COEFF_SHIFT
+                x2, x1 = x1, x
+                y2, y1 = y1, y
+
+    margin = INT32_MAX / float(worst)
+    good = margin >= 4.0
+    if not good:
+        ok = False
+    print(f"   worst accumulator {worst:,} vs int32 {INT32_MAX:,}")
+    print(f"   margin {margin:.1f}x   ({worst_case})   "
+          f"{'ok' if good else '<-- TOO CLOSE'}")
+
+    # The algebraic bound too - every term at maximum, same sign at once.
+    # No signal can produce it, but if even THAT fits there is nothing to
+    # argue about.
+    bound = 0
+    for f0 in BAND_HZ:
+        _, _, _, b0, a1, a2 = quantised_coeffs(f0)
+        ymax = max_excite * 2
+        bound = max(bound, abs(b0) * 2 * max_excite
+                    + abs(a1) * ymax + abs(a2) * ymax)
+    good = bound < INT32_MAX
+    if not good:
+        ok = False
+    print(f"   algebraic worst case {bound:,}   "
+          f"{'ok - fits with ' + f'{INT32_MAX / bound:.2f}x' if good else '<-- OVERFLOWS'}")
+    print("   (an int32 that wraps INVERTS rather than clipping, and a")
+    print("    resonator fed its own inverted output explodes - so this")
+    print("    is proved, not assumed)")
+    return ok
+
+
 def main():
     print(f"TRACT8 filter bank check: {len(BAND_HZ)} bands, Q={Q}, "
           f"fs={FS}, coefficients Q{COEFF_SHIFT}")
@@ -253,6 +331,7 @@ def main():
     ok &= check_q()
     ok &= check_coverage()
     ok &= check_headroom()
+    ok &= check_accumulator_width()
 
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1

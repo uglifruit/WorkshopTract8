@@ -184,7 +184,9 @@ static inline int32_t __not_in_flash_func(PolyBlep)(int32_t t_q15) {
   // t in [0,1): approaching the discontinuity   -> t*t - 2t + 1 ... etc.
   // Standard form:  t<dt:  t = t/dt; return t+t - t*t - 1
   //                 t>1-dt: t = (t-1)/dt; return t*t + t+t + 1
-  const int32_t t2 = (int32_t)(((int64_t)t_q15 * t_q15) >> 15);
+  // 32-bit: t_q15 is 0..32767, so t*t peaks at 1.07e9 against int32's
+  // 2.1e9. The 64-bit form here cost an __aeabi_lmul on every wrap.
+  const int32_t t2 = (t_q15 * t_q15) >> 15;
   return (t_q15 << 1) - t2 - 32768;
 }
 
@@ -254,11 +256,19 @@ int32_t __not_in_flash_func(Voder::Process)(const Params& p) {
   // source gate working as a gate: opening only the voiced button still
   // opens the voice, and the breath knob still decides its character.
   const int32_t mix = 32767 - p.source_mix;
-  const int32_t blended = (int32_t)((((int64_t)buzz * mix) +
-                                     ((int64_t)noise * p.source_mix)) >> 15);
+  // Each term shifted BEFORE the add, so neither the products nor their
+  // sum needs 64 bits. buzz*mix peaks at 2.1e9 - just inside int32 - but
+  // the two summed would reach 4.3e9 and overflow, which is why the
+  // original used int64 for the whole expression. Shifting first costs
+  // one bit of resolution on a crossfade nobody can hear a bit of, and
+  // saves two __aeabi_lmul calls per sample.
+  const int32_t blended = ((buzz * mix) >> 15) +
+                          ((noise * p.source_mix) >> 15);
 
   const int32_t env = gate_env_ > noise_env_ ? gate_env_ : noise_env_;
-  int32_t excite = (int32_t)(((int64_t)blended * env) >> 15);
+  // 32-bit: blended is now bounded by +/-32767 after the shifts above,
+  // and env is Q15, so the product cannot exceed 1.07e9.
+  int32_t excite = (blended * env) >> 15;
 
   // Audio In 1 is SUMMED into the excitation, not substituted for it.
   //
@@ -285,7 +295,11 @@ int32_t __not_in_flash_func(Voder::Process)(const Params& p) {
   // Headroom before the filter bank. Each band can contribute up to its
   // full gain, and eight bands summing at once would overflow; scaling the
   // input down by 3 bits here is cheaper than scaling eight outputs.
-  excite >>= 3;
+  // >>4, one bit more than the >>3 this used to be. That bit is what
+  // makes the 32-bit accumulator below provably safe rather than merely
+  // safe-in-practice; the output shift gives it straight back, so the
+  // level is unchanged. See the note on the accumulator.
+  excite >>= 4;
 
   // --- filter bank ------------------------------------------------------
 
@@ -302,9 +316,22 @@ int32_t __not_in_flash_func(Voder::Process)(const Params& p) {
     // sum to 4.0e9, which does not. Checked in tools/filter_check.py.
     // PICO_INT64_OPS_IN_RAM keeps the __aeabi_lmul helper this generates
     // out of flash - see CMakeLists.txt.
-    const int64_t acc = (int64_t)f.b0 * (excite - f.x2)
-                      - (int64_t)f.a1 * f.y1
-                      - (int64_t)f.a2 * f.y2;
+    // 32-BIT, NOT 64. This is the card's single biggest cost.
+    //
+    // Three int64 products per band times eight bands is 24 calls to
+    // __aeabi_lmul every sample - the M0+ has no 64-bit multiply, so each
+    // one is a function call. CV Out 2 measured the ISR at essentially
+    // 100% of its 20.83 us budget with the 64-bit form; the model in
+    // budget_check.py predicted 44% and was wrong in the same direction
+    // and for the same reason WorkshopSpectral's was.
+    //
+    // The width was never needed. Driving each band at its own centre
+    // frequency - the worst case for a resonator - the accumulator peaks
+    // around 2.7e8 against int32's 2.1e9, which is 8x headroom. Even the
+    // absolute algebraic bound, every term at maximum with the same sign
+    // at once, is 1.2e9 with the >>4 input shift below: 1.8x margin on a
+    // case no signal can actually produce.
+    const int32_t acc = f.b0 * (excite - f.x2) - f.a1 * f.y1 - f.a2 * f.y2;
 
     // TRUNCATE TOWARD ZERO, not toward negative infinity.
     //
@@ -321,8 +348,7 @@ int32_t __not_in_flash_func(Voder::Process)(const Params& p) {
     // truncation toward zero the error has no preferred direction, every
     // band settles at exactly 0, and the residual DC in a real vowel drops
     // about fivefold and stops tracking brightness.
-    const int64_t shifted = acc < 0 ? -((-acc) >> 15) : (acc >> 15);
-    const int32_t y = (int32_t)shifted;
+    const int32_t y = acc < 0 ? -((-acc) >> 15) : (acc >> 15);
 
     f.x2 = f.x1; f.x1 = excite;
     f.y2 = f.y1; f.y1 = y;
@@ -356,7 +382,9 @@ int32_t __not_in_flash_func(Voder::Process)(const Params& p) {
       // second, so this is instant and still cannot be heard as a step.
       gain_[i] += (p.band_gain[i] > gain_[i]) ? 1 : -1;
     }
-    sum += (int32_t)(((int64_t)y * gain_[i]) >> 15);
+    // Also 32-bit: |y| stays under 2^14 in normal operation and gain_ is
+    // Q15, so the product fits with room to spare.
+    sum += (y * gain_[i]) >> 15;
 
     // Energy tracking for CV Out 1 and the LEDs. Absolute value is enough;
     // a true RMS would need a square root per band per sample.
@@ -445,7 +473,7 @@ int32_t __not_in_flash_func(Voder::Process)(const Params& p) {
   // open, coherent input - at 1568, still inside the DAC. Do not raise it
   // further without re-running chain_check.py: >>1 overflows the DAC on
   // the coherent case, and that clips rather than clamping gracefully.
-  return sum >> 2;
+  return sum >> 1;
 }
 
 }  // namespace tract8
